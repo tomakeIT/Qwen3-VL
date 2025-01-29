@@ -1,5 +1,5 @@
 from threading import Thread
-from transformers import AutoProcessor, Qwen2VLForConditionalGeneration, TextIteratorStreamer
+from transformers import AutoProcessor, Qwen2_5_VLForConditionalGeneration, TextIteratorStreamer
 import openai
 import copy
 import shutil
@@ -36,7 +36,7 @@ oss_reader = None
 
 MAX_SEQ_LEN = 32000
 
-DEFAULT_CKPT_PATH = 'Qwen/Qwen2-VL-7B-Instruct'
+DEFAULT_CKPT_PATH = 'Qwen/Qwen2.5-VL-7B-Instruct'
 
 def compute_seqlen_estimated(tokenizer, json_input, sample_strategy_func):
     total_seq_len, img_seq_len, text_seq_len = 0, 0, 0
@@ -153,12 +153,12 @@ def _load_model_processor(args):
 
     # Check if flash-attn2 flag is enabled and load model accordingly
     if args.flash_attn2:
-        model = Qwen2VLForConditionalGeneration.from_pretrained(args.checkpoint_path,
+        model = Qwen2_5_VLForConditionalGeneration.from_pretrained(args.checkpoint_path,
                                                                 torch_dtype='auto',
                                                                 attn_implementation='flash_attention_2',
                                                                 device_map=device_map)
     else:
-        model = Qwen2VLForConditionalGeneration.from_pretrained(
+        model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
             args.checkpoint_path, device_map=device_map)
 
     processor = AutoProcessor.from_pretrained(args.checkpoint_path)
