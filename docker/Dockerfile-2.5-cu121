@@ -74,7 +74,7 @@ mkdir -p /data/shared/code \
     && git checkout bf3b79efb82676219a3275764d8fcf4c70097ce5 \
     && pip3 install --no-cache-dir -r requirements-cuda.txt \
     && pip3 install --no-cache-dir setuptools-scm \
-    && pip3 install --no-cache-dir --no-build-isolation . -vvv \
+    && pip3 install --no-cache-dir . \
     && cd /data/shared/Qwen \
     && rm -rf /data/shared/code/vllm
 fi
