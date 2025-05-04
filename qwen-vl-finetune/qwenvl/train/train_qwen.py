@@ -36,7 +36,7 @@ from transformers import (
     Qwen2_5_VLForConditionalGeneration,
 )
 from qwenvl.data.data_qwen import make_supervised_data_module
-
+from qwenvl.data.data_qwen_packed import make_supervised_data_module_packed
 from qwenvl.train.argument import (
     ModelArguments,
     DataArguments,
@@ -152,8 +152,11 @@ def train(attn_implementation="flash_attention_2"):
     if torch.distributed.get_rank() == 0:
         model.visual.print_trainable_parameters()
         model.model.print_trainable_parameters()
-
-    data_module = make_supervised_data_module(tokenizer=tokenizer, data_args=data_args)
+    
+    if data_args.data_packing:
+        data_module = make_supervised_data_module_packed(tokenizer=tokenizer, data_args=data_args)
+    else:
+        data_module = make_supervised_data_module(tokenizer=tokenizer, data_args=data_args)
     trainer = Trainer(
         model=model, processing_class=tokenizer, args=training_args, **data_module
     )
@@ -165,10 +168,6 @@ def train(attn_implementation="flash_attention_2"):
         trainer.train()
     trainer.save_state()
     data_args.image_processor.save_pretrained(training_args.output_dir)
-
-    source_path = os.path.join(model_args.model_name_or_path, "chat_template.json")
-    template_path = os.path.join(training_args.output_dir, "chat_template.json")
-    shutil.copy2(source_path, template_path)
 
     model.config.use_cache = True
 

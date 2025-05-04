@@ -17,10 +17,12 @@ The `qwenvl` directory contains the following components:
 ### `data/`
 - `__init__.py`: Contains datasets configs
 - `data_qwen.py`: Data processing module for QwenVL models
+- `data_qwen_packed.py`: Packed data processing module for QwenVL models
 - `rope2d.py`: Provide RoPE implementation
 
 ### `tools`
 - `process_bbox.ipynb`: Convert bbox into QwenVL format. If you have grounding data, please refer this file to tranform your data.
+- `pack_data.py`: Pack data into even length buckets.
 
 ## Requirements
 
@@ -33,6 +35,7 @@ You could use follow version of packages:
 - `flash_attn==2.7.4.post1`
 - `triton==3.0.0`
 - `accelerate==1.4.0`
+- `torchcodec==0.2`
 
 ## Custom Dataset Configuration
 
@@ -115,6 +118,38 @@ The customized data should have the format like:
         }
     ]
 }
+```
+
+5. **Packed Data Example**:
+```json
+[
+    {
+        "image": "images/001.jpg",
+        "conversations": [
+            {
+                "from": "human",
+                "value": "<image>\nWhat's the main object in this picture?"
+            },
+            {
+                "from": "gpt",
+                "value": "A red apple on a wooden table"
+            }
+        ]
+    },
+    {
+        "image": "images/002.jpg",
+        "conversations": [
+            {
+                "from": "human",
+                "value": "<image>\nWhat's the main object in this picture?"
+            },
+            {
+                "from": "gpt",
+                "value": "A green orange on a plastic table"
+            }
+        ]
+    }
+]
 ```
 
 Some examples are shown in `demo/single_images.json` and `demo/video.json` and these json files could be used for training.
@@ -237,6 +272,7 @@ torchrun --nproc_per_node=$NPROC_PER_NODE \
          # Sequence Configuration
          --model_max_length 4096 \           # [TrainingArguments] Max sequence length
          --data_flatten True \               # [DataArguments] Concatenate batch sequences
+         --data_packing True \               # [DataArguments] Using packing data
          
          # Image Processing
          --max_pixels 576\*28\*28 \               # [DataArguments] Max image pixels (H*W) for image
@@ -267,6 +303,7 @@ The script accepts arguments in three categories:
 
    - Flags to control which components to tune (`tune_mm_vision`, `tune_mm_mlp`, `tune_mm_llm`). If trained with both image and video data, tune_mm_vision should be False: `tune_mm_vision=False`
    - `data_flatten` flag means data in a batch are concat into one sequence
+   - `data_packing` requires preprocess with `tools/pack_data.py`
    - Training hyperparameters, the suggested learning rate is from 1e-6 to 2e-7
    - Training resolution is critical for the model performances, hence `--max_pixels` and `--min_pixels` should be properly set
    - Training with Qwen2.5-VL-32B model, you should have 8 80G GPU refering to `scripts/sft_32b.sh`

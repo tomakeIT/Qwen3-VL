@@ -6,6 +6,11 @@ CAMBRIAN_737K = {
     "data_path": "",
 }
 
+CAMBRIAN_737K_PACK = {
+    "annotation_path": f"PATH_TO_CAMBRIAN_737K_ANNOTATION_PACKED",
+    "data_path": f"",
+}
+
 MP_DOC = {
     "annotation_path": "PATH_TO_MP_DOC_ANNOTATION",
     "data_path": "PATH_TO_MP_DOC_DATA",
@@ -23,6 +28,7 @@ VIDEOCHATGPT = {
 
 data_dict = {
     "cambrian_737k": CAMBRIAN_737K,
+    "cambrian_737k_pack": CAMBRIAN_737K_PACK,
     "mp_doc": MP_DOC,
     "clevr_mc": CLEVR_MC,
     "videochatgpt": VIDEOCHATGPT,

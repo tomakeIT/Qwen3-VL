@@ -178,7 +178,11 @@ class LazySupervisedDataset(Dataset):
             else:
                 rank0_print(f"dataset name: {data}")
             for ann in annotations:
-                ann["data_path"] = data["data_path"]
+                if isinstance(ann, list):
+                    for sub_ann in ann:
+                        sub_ann["data_path"] = data["data_path"]
+                else:
+                    ann["data_path"] = data["data_path"]
             list_data_dict += annotations
 
         rank0_print(f"Total training samples: {len(list_data_dict)}")
@@ -265,6 +269,7 @@ class LazySupervisedDataset(Dataset):
     def video_decord(self, video_file):
         if not os.path.exists(video_file):
             print(f"File not exist: {video_file}")
+            return None
         vr = VideoReader(video_file, num_threads=4)
         total_frames = len(vr)
         avg_fps = vr.get_avg_fps()
@@ -356,12 +361,7 @@ class LazySupervisedDataset(Dataset):
         except Exception as e:
             raise e
 
-    def _get_item(self, i) -> Dict[str, torch.Tensor]:
-        sources = self.list_data_dict[i]
-        if isinstance(i, int):
-            sources = [sources]
-        assert len(sources) == 1, "Don't know why it is wrapped to a list"  # FIXME
-
+    def get_data(self, sources) -> Dict[str, torch.Tensor]:
         # define some variables
         grid_thw_merged = None
         video_grid_thw_merged = None
@@ -370,8 +370,8 @@ class LazySupervisedDataset(Dataset):
         second_per_grid_ts = None
 
         if "image" in sources[0]:
-            image_folder = self.list_data_dict[i]["data_path"]
-            image_file = self.list_data_dict[i]["image"]
+            image_folder = sources[0]["data_path"]
+            image_file = sources[0]["image"]
             if isinstance(image_file, List):
                 if len(image_file) > 1:
                     image_file = [
@@ -397,8 +397,8 @@ class LazySupervisedDataset(Dataset):
                 for merged_thw in grid_thw_merged
             ]
         if "video" in sources[0]:
-            video_file = self.list_data_dict[i]["video"]
-            video_folder = self.list_data_dict[i]["data_path"]
+            video_file = sources[0]["video"]
+            video_folder = sources[0]["data_path"]
             if isinstance(video_file, List):
                 if len(video_file) > 1:
                     video_file = [
@@ -459,19 +459,66 @@ class LazySupervisedDataset(Dataset):
         data_dict["position_ids"] = position_ids
         data_dict["attention_mask"] = [data_dict["input_ids"][0].size(0)]
 
-        if "image" in self.list_data_dict[i]:
+        if "image" in sources[0]:
             data_dict["pixel_values"] = torch.cat(image, dim=0)
             data_dict["image_grid_thw"] = torch.cat(
                 [thw.unsqueeze(0) for thw in grid_thw], dim=0
             )
         # video exist in the data
-        elif "video" in self.list_data_dict[i]:
+        elif "video" in sources[0]:
             data_dict["pixel_values_videos"] = torch.cat(video, dim=0)
             data_dict["video_grid_thw"] = torch.cat(
                 [thw.unsqueeze(0) for the in video_grid_thw], dim=0
             )
 
         return data_dict
+
+    def _get_item(self, i) -> Dict[str, torch.Tensor]:
+
+        sources = self.list_data_dict[i]
+
+        if isinstance(sources, dict):
+            if isinstance(i, int):
+                sources = [sources]
+            assert len(sources) == 1, "Don't know why it is wrapped to a list"  # FIXME
+            return self.get_data(sources)
+
+        if isinstance(sources, list):
+            data_list = []
+            new_data_dict = {}
+            for source in sources:
+                if isinstance(i, int):
+                    source = [source]
+                assert (
+                    len(source) == 1
+                ), "Don't know why it is wrapped to a list"  # FIXME
+                data_list.append(self.get_data(source))
+
+            input_ids = torch.cat([d["input_ids"] for d in data_list], dim=1)
+            labels = torch.cat([d["labels"] for d in data_list], dim=1)
+            position_ids = torch.cat([d["position_ids"] for d in data_list], dim=2)
+            attention_mask = [
+                d["attention_mask"][0] for d in data_list if "attention_mask" in d
+            ]
+            new_data_dict = {
+                "input_ids": input_ids,
+                "labels": labels,
+                "position_ids": position_ids,
+                "attention_mask": attention_mask if attention_mask else None
+            }
+            
+            if any("pixel_values" in d for d in data_list):
+                new_data_dict.update({
+                    "pixel_values": torch.cat([d["pixel_values"] for d in data_list if "pixel_values" in d], dim=0),
+                    "image_grid_thw": torch.cat([d["image_grid_thw"] for d in data_list if "image_grid_thw" in d], dim=0)
+                })
+            
+            if any("pixel_values_videos" in d for d in data_list):
+                new_data_dict.update({
+                    "pixel_values_videos": torch.cat([d["pixel_values_videos"] for d in data_list if "pixel_values_videos" in d], dim=0),
+                    "video_grid_thw": torch.cat([d["video_grid_thw"] for d in data_list if "video_grid_thw" in d], dim=0)
+                })
+            return new_data_dict
 
 
 def pad_and_cat(tensor_list):
@@ -489,77 +536,7 @@ def pad_and_cat(tensor_list):
 
 
 @dataclass
-class DataCollatorForSupervisedDataset(object):
-    """Collate examples for supervised fine-tuning."""
-
-    tokenizer: transformers.PreTrainedTokenizer
-
-    def __call__(self, instances: Sequence[Dict]) -> Dict[str, torch.Tensor]:
-        input_ids, labels, position_ids = tuple(
-            [instance[key] for instance in instances]
-            for key in ("input_ids", "labels", "position_ids")
-        )
-        input_ids = [ids.squeeze(0) for ids in input_ids]
-        labels = [ids.squeeze(0) for ids in labels]
-        input_ids = torch.nn.utils.rnn.pad_sequence(
-            input_ids, batch_first=True, padding_value=self.tokenizer.pad_token_id
-        )
-        labels = torch.nn.utils.rnn.pad_sequence(
-            labels, batch_first=True, padding_value=IGNORE_INDEX
-        )
-        position_ids = pad_and_cat(position_ids)
-        input_ids = input_ids[:, : self.tokenizer.model_max_length]
-        labels = labels[:, : self.tokenizer.model_max_length]
-        position_ids = position_ids[:, : self.tokenizer.model_max_length]
-        batch = dict(
-            input_ids=input_ids,
-            labels=labels,
-            attention_mask=input_ids.ne(self.tokenizer.pad_token_id),
-        )
-        images = list(
-            instance["pixel_values"]
-            for instance in instances
-            if "pixel_values" in instance
-        )
-        videos = list(
-            instance["pixel_values_videos"]
-            for instance in instances
-            if "pixel_values_videos" in instance
-        )
-        if len(images) != 0:
-            concat_images = torch.cat([image for image in images], dim=0)
-            grid_thw = [
-                instance["image_grid_thw"]
-                for instance in instances
-                if "image_grid_thw" in instance
-            ]
-            grid_thw = torch.cat(grid_thw, dim=0)
-        else:
-            concat_images = None
-            grid_thw = None
-
-        if len(videos) != 0:
-            concat_videos = torch.cat([video for video in videos], dim=0)
-            video_grid_thw = [
-                instance["video_grid_thw"]
-                for instance in instances
-                if "video_grid_thw" in instance
-            ]
-            video_grid_thw = torch.cat(video_grid_thw, dim=0)
-        else:
-            concat_videos = None
-            video_grid_thw = None
-
-        batch["pixel_values"] = concat_images
-        batch["image_grid_thw"] = grid_thw
-        batch["pixel_values_videos"] = concat_videos
-        batch["video_grid_thw"] = video_grid_thw
-        batch["position_ids"] = position_ids
-        return batch
-
-
-@dataclass
-class FlattenedDataCollatorForSupervisedDataset(DataCollatorForSupervisedDataset):
+class PackedDataCollatorForSupervisedDataset(object):
     """Collate examples into packed sequence with multi-modal support."""
 
     tokenizer: transformers.PreTrainedTokenizer
@@ -632,17 +609,12 @@ class FlattenedDataCollatorForSupervisedDataset(DataCollatorForSupervisedDataset
         return batch
 
 
-def make_supervised_data_module(
+def make_supervised_data_module_packed(
     tokenizer: transformers.PreTrainedTokenizer, data_args
 ) -> Dict:
     """Make dataset and collator for supervised fine-tuning."""
     train_dataset = LazySupervisedDataset(tokenizer=tokenizer, data_args=data_args)
-    if data_args.data_flatten:
-        data_collator = FlattenedDataCollatorForSupervisedDataset(tokenizer=tokenizer)
-        return dict(
-            train_dataset=train_dataset, eval_dataset=None, data_collator=data_collator
-        )
-    data_collator = DataCollatorForSupervisedDataset(tokenizer=tokenizer)
+    data_collator = PackedDataCollatorForSupervisedDataset(tokenizer=tokenizer)
     return dict(
         train_dataset=train_dataset, eval_dataset=None, data_collator=data_collator
     )
