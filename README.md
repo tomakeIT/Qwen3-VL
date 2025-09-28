@@ -855,6 +855,9 @@ uv pip install -U vllm \
 
 ### Online Serving
 You can start either a vLLM or SGLang server to serve LLMs efficiently, and then access it using an OpenAI-style API.
+
+The following launch command is applicable to H100/H200; for more efficient deployment or deployment on other GPUs, please refer to the [vLLM community guide](https://docs.vllm.ai/projects/recipes/en/latest/Qwen/Qwen3-VL.html).
+
 * vLLM server
 ```shell
 # FP8 requires NVIDIA H100+ and CUDA 12+
@@ -871,7 +874,7 @@ python -m vllm.entrypoints.openai.api_server \
   --quantization fp8 \
   --distributed-executor-backend mp
 ```
-* SGLang server:
+* SGLang server
 ```
 python -m sglang.launch_server \
    --model-path Qwen/Qwen3-VL-235B-A22B-Instruct\
@@ -999,6 +1002,19 @@ def prepare_inputs_for_vllm(messages, processor):
 
 
 if __name__ == '__main__':
+    # messages = [
+    #     {
+    #         "role": "user",
+    #         "content": [
+    #             {
+    #                 "type": "video",
+    #                 "video": "https://qianwen-res.oss-cn-beijing.aliyuncs.com/Qwen2-VL/space_woaudio.mp4",
+    #             },
+    #             {"type": "text", "text": "这段视频有多长"},
+    #         ],
+    #     }
+    # ]
+
     messages = [
         {
             "role": "user",
@@ -1012,6 +1028,7 @@ if __name__ == '__main__':
         }
     ]
 
+    # TODO: change to your own checkpoint path
     checkpoint_path = "Qwen/Qwen3-VL-235B-A22B-Instruct"
     processor = AutoProcessor.from_pretrained(checkpoint_path)
     inputs = [prepare_inputs_for_vllm(message, processor) for message in [messages]]
@@ -1021,8 +1038,7 @@ if __name__ == '__main__':
         trust_remote_code=True,
         gpu_memory_utilization=0.97,
         enforce_eager=False,
-        max_model_len=8192,
-        max_num_seqs=8,
+        quantization="fp8",
         tensor_parallel_size=torch.cuda.device_count(),
         seed=0
     )
