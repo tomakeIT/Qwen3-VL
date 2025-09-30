@@ -404,7 +404,7 @@ pip install qwen-vl-utils==0.0.14
 
 Compared to previous version, the new `qwen-vl-utils` introduces:
 
-- "image_path_size": `14` for Qwen2.5-VL and `16` for Qwen3-VL. Default set to `14`.
+- "image_patch_size": `14` for Qwen2.5-VL and `16` for Qwen3-VL. Default set to `14`.
 
 - "return_video_metadata"(Qwen3-VL only): Due to the new video processor, if True, each video returns as (video_tensor, video_metadata). Default set to `False`.
 
