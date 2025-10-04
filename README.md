@@ -863,7 +863,9 @@ vllm serve Qwen/Qwen3-VL-235B-A22B-Instruct-FP8 \
   --tensor-parallel-size 8 \
   --mm-encoder-tp-mode data \
   --enable-expert-parallel \
-  --async-scheduling
+  --async-scheduling \
+  --host 0.0.0.0 \
+  --port 22002
 ```
 * SGLang server
 ```
