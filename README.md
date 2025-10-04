@@ -72,20 +72,23 @@ Available in Dense and MoE architectures that scale from edge to cloud, with Ins
 
 ## Performance
 
-#### Visual Tasks:
+### Visual Tasks
 
 <div style="display: flex; justify-content: center; gap: 16px; flex-wrap: wrap;">
-    <img src="https://qianwen-res.oss-accelerate.aliyuncs.com/Qwen3-VL/table_nothinking_vl.jpg" width="48%" />
-    <img src="https://qianwen-res.oss-accelerate.aliyuncs.com/Qwen3-VL/table_thinking_vl.jpg" width="48%" />
+    <img src="https://qianwen-res.oss-accelerate.aliyuncs.com/Qwen3-VL/table_nothinking_vl.jpg" width="24%" />
+    <img src="https://qianwen-res.oss-accelerate.aliyuncs.com/Qwen3-VL/table_thinking_vl.jpg" width="24%" />
+	<img src="https://qianwen-res.oss-accelerate.aliyuncs.com/Qwen3-VL/table_nothinking_vl-30a3.jpg" width="26%" />
+    <img src="https://qianwen-res.oss-accelerate.aliyuncs.com/Qwen3-VL/table_thinking_vl_30A3.jpg" width="22.5%" />
 </div>
 
-#### Pure Text Tasks:
+
+### Text-Centric Tasks
 
 <div style="display: flex; justify-content: center; gap: 16px; flex-wrap: wrap;">
-    <img src="https://qianwen-res.oss-accelerate.aliyuncs.com/Qwen3-VL/table_nothinking_text.jpg" width="48%" />
-    <img src="https://qianwen-res.oss-accelerate.aliyuncs.com/Qwen3-VL/table_thinking_text.jpg" width="48%" />
+    <img src="https://qianwen-res.oss-accelerate.aliyuncs.com/Qwen3-VL/table_nothinking_text.jpg" width="30%" />
+    <img src="https://qianwen-res.oss-accelerate.aliyuncs.com/Qwen3-VL/table_thinking_text.jpg" width="32%" />
+	<img src="https://qianwen-res.oss-accelerate.aliyuncs.com/Qwen3-VL/table_nothinking_text-30a3.jpg" width="30%" />
 </div>
-
 
 
 ## Cookbooks
