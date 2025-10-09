@@ -1111,6 +1111,38 @@ if __name__ == "__main__":
 ```
 
 
+## Evaluation Reproduction
+To facilitate faithful reproduction of our reported results, we summarize our official evaluation settings below.
+- Inference runtime: [vLLM](https://github.com/vllm-project/vllm)
+- Evaluation frameworks: [VLMEvalKit](https://github.com/open-compass/VLMEvalKit), [lmms-eval](https://github.com/EvolvingLMMs-Lab/lmms-eval)
+- Notes:
+  - For a few benchmarks, we slightly modified the evaluation prompts; detailed changes will be documented in the upcoming technical report.
+  - A small number of benchmarks are internally constructed; we plan to release the code and reproduction assets afterwards.
+### Generation Hyperparameters
+#### Instruct models
+```bash
+export greedy='false'
+export seed=3407
+export top_p=0.8
+export top_k=20
+export temperature=0.7
+export repetition_penalty=1.0
+export presence_penalty=1.5
+export out_seq_length=32768
+```
+#### Thinking models
+```bash
+export greedy='false'
+export seed=1234
+export top_p=0.95
+export top_k=20
+export repetition_penalty=1.0
+export presence_penalty=0.0
+export temperature=0.6
+export out_seq_length=40960
+```
+
+
 ## 🐳 Docker
 
 To simplify the deploy process, we provide docker images with pre-build environments: [qwenllm/qwenvl](https://hub.docker.com/r/qwenllm/qwenvl). You only need to install the driver and download model files to launch demos.
