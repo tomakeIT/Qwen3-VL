@@ -874,11 +874,7 @@ vllm serve Qwen/Qwen3-VL-235B-A22B-Instruct-FP8 \
 ```
 python -m sglang.launch_server \
    --model-path Qwen/Qwen3-VL-235B-A22B-Instruct\
-   --host 0.0.0.0 \
-   --port 22002 \
-   --tp 8 \
-   --max-num-batched-tokens 8192 \
-   --max-num-seqs 256
+   --tp 8 
 ```
 * Image Request Example
 ```python
