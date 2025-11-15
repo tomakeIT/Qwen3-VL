@@ -9,7 +9,7 @@ NNODES=${WORLD_SIZE:-1}
 deepspeed=./scripts/zero3.json
 
 # Model configuration
-llm=Qwen/Qwen2.5-VL-3B-Instruct  # Using HuggingFace model ID
+llm=Qwen/Qwen3-VL-2B-Instruct # Using HuggingFace model ID
 
 # Training hyperparameters
 lr=2e-7
