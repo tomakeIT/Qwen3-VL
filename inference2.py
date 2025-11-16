@@ -103,6 +103,10 @@ def build_target_frames(
 # ==========================
 # 4. 构造 Qwen 消息
 # ==========================
+from typing import List, Tuple, Optional
+from PIL import Image
+
+
 def build_qwen_messages(
     task_description: str,
     demo_examples: Optional[List[Tuple[Image.Image, float]]],
@@ -112,7 +116,7 @@ def build_qwen_messages(
     利用 reference demo + (initial_frame, target_frames) 构造 Qwen 的 messages。
 
     target_frames[0] 视为 initial scene (0%)，
-    target_frames[1:] 为需要预测进度的目标帧（可以只有 1 张，也可以多张）。
+    target_frames[1:] 为需要预测进度的目标帧（可以只有 1 个，也可以多张）。
     """
     assert len(target_frames) >= 2, "target_frames 至少需要包含 initial + 1 个 target frame"
 
@@ -139,10 +143,10 @@ def build_qwen_messages(
     if demo_examples is not None and len(demo_examples) > 0:
         content.append({
             "type": "text",
-            "text": "Here are example frames (in random order) with their task completion percentages:\n"
+            "text": "Here are example frames with their task completion percentages:\n"
         })
         for i, (img, prog) in enumerate(demo_examples, start=1):
-            # 先图片再文字描述都可以，这里保持简单：文字+图片
+            # 文字 + 图片
             text = (
                 f"\nExample Frame {i}: "
                 f"At this time, the task completion percentage is {prog:.1f}%.\n"
@@ -150,7 +154,21 @@ def build_qwen_messages(
             content.append({"type": "text", "text": text})
             content.append({"type": "image", "image": img})
 
+        # 让模型先分析这些 demo 为什么是这样的百分比
+        analysis_instruction = (
+            "\nBefore predicting completion for the new episode, analyze the above example frames.\n"
+            "Explain in concise bullet points WHY the given task completion percentages for the example frames "
+            "are reasonable, focusing on visual cues such as:\n"
+            "- relative positions and distances between key objects,\n"
+            "- orientation or alignment of objects,\n"
+            "- whether the goal object is approaching or already at the target location,\n"
+            "- partial vs. full contact or placement.\n\n"
+            "This analysis should only refer to the EXAMPLE frames and their given percentages.\n"
+        )
+        content.append({"type": "text", "text": analysis_instruction})
+
     # ---- Initial scene（target 轨迹的第一帧）----
+    content.append({"type": "text", "text": "\nAfter you finish your analysis of the example frames, you will estimate the completion for the new episode.\n\n"})
     content.append({"type": "text", "text": "\nInitial robot scene (new episode):\n"})
     content.append({"type": "image", "image": initial_frame})
     content.append({
@@ -162,18 +180,17 @@ def build_qwen_messages(
 
     # ---- 说明如何预测 target frame ----
     query_text = (
-        f"Now, for the task of {task_description}, "
-        "we will provide one target frame from the SAME episode.\n"
-        "For this target frame, estimate its task completion percentage relative to the initial scene.\n\n"
-        "Strictly follow this exact format ON A SINGLE LINE:\n"
+        f"For the task of {task_description}, we now provide one target image from the same episode.\n"
+        "Estimate its task completion percentage relative to the initial scene.\n\n"
+        "Finally, after your analysis, you MUST provide your numeric answer in the following EXACT format: "
         "Frame 1: Frame Description: <short description>, Task Completion Percentages: <number between 0 and 100>%\n\n"
         "Make sure the percentage is NOT limited to only 0 or 100. Use intermediate values whenever appropriate.\n\n"
-        "Now, here is the target frame:\n"
+        "Now, here is the target image:\n"
     )
     content.append({"type": "text", "text": query_text})
 
     # ---- 逐个插入 target frame ----
-    for i, img in enumerate[Image](query_frames, start=1):
+    for i, img in enumerate(query_frames, start=1):
         content.append({"type": "text", "text": f"\nFrame {i} (target frame):\n"})
         content.append({"type": "image", "image": img})
 
@@ -184,6 +201,7 @@ def build_qwen_messages(
         }
     ]
     return messages
+
 
 
 
@@ -262,7 +280,7 @@ def main():
     task_description = "put the white mug on the plate"
     demo_traj_folder = "data/1/right_shoulder"
     target_traj_folder = "data/2/right_shoulder"
-    frame_id = 44
+    frame_id = 32
     expected_progress = 100.0 * frame_id / (len(list_image_paths(target_traj_folder)) - 1)
     # ===== 加载模型 =====
     model_name = "Qwen/Qwen3-VL-2B-Instruct"
