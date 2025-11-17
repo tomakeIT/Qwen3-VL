@@ -10,6 +10,20 @@ from PIL import Image
 import torch
 from transformers import AutoModelForImageTextToText, AutoProcessor
 
+import numpy as np
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
+try:
+    import cv2  # type: ignore
+except Exception:
+    cv2 = None
+try:
+    import imageio  # type: ignore
+except Exception:
+    imageio = None
+os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
 
 # ==========================
 # 1. 基础工具函数
@@ -101,6 +115,138 @@ def build_target_frames(
 
 
 # ==========================
+# 5. 可视化与视频生成
+# ==========================
+
+def _to_nan_array(values: List[Optional[float]]) -> np.ndarray:
+    arr = np.array([np.nan if v is None else float(v) for v in values], dtype=np.float32)
+    return arr
+
+
+def render_progress_frame(
+    current_image: Image.Image,
+    predicted_progress_list: List[Optional[float]],
+    expected_progress_list: List[Optional[float]],
+    dpi: int = 120,
+) -> np.ndarray:
+    """
+    生成一张复合图：左侧为当前帧图像，右侧为进度曲线（预测 vs 期望），并高亮当前点。
+    返回 RGB 的 numpy 数组 (H, W, 3)。
+    """
+    img_np = np.asarray(current_image)
+    img_h, img_w = img_np.shape[0], img_np.shape[1]
+
+    # 右侧曲线区域宽度按图像宽度的 0.8 估算
+    plot_w = int(round(img_w * 0.8))
+    fig_w_px = img_w + plot_w
+    fig_h_px = img_h
+    figsize = (fig_w_px / dpi, fig_h_px / dpi)
+
+    fig = plt.figure(figsize=figsize, dpi=dpi)
+    gs = fig.add_gridspec(1, 2, width_ratios=[img_w, plot_w])
+
+    # 左侧：图像
+    ax_img = fig.add_subplot(gs[0, 0])
+    ax_img.imshow(img_np)
+    ax_img.axis("off")
+    ax_img.set_title("Current Frame", fontsize=10)
+
+    # 右侧：曲线
+    ax_plot = fig.add_subplot(gs[0, 1])
+    ax_plot.set_title("Task Progress (%)", fontsize=10)
+    ax_plot.set_ylim(0, 100)
+    ax_plot.set_xlim(1, max(2, len(predicted_progress_list)))
+    ax_plot.set_xlabel("Frame Index")
+    ax_plot.set_ylabel("Progress (%)")
+    ax_plot.grid(True, linestyle="--", alpha=0.3)
+
+    xs = np.arange(1, len(predicted_progress_list) + 1, dtype=np.int32)
+    pred_arr = _to_nan_array(predicted_progress_list)
+    exp_arr = _to_nan_array(expected_progress_list)
+
+    # 画曲线（跳过 NaN 的段）
+    if np.any(~np.isnan(exp_arr)):
+        ax_plot.plot(xs, exp_arr, color="#1f77b4", label="Expected", linewidth=2)
+    if np.any(~np.isnan(pred_arr)):
+        ax_plot.plot(xs, pred_arr, color="#d62728", label="Predicted", linewidth=2)
+
+    # 高亮当前点
+    if len(xs) > 0:
+        x_cur = xs[-1]
+        if not np.isnan(exp_arr[-1]):
+            ax_plot.scatter([x_cur], [exp_arr[-1]], color="#1f77b4", s=40, zorder=5)
+        if not np.isnan(pred_arr[-1]):
+            ax_plot.scatter([x_cur], [pred_arr[-1]], color="#d62728", s=40, zorder=6)
+
+    ax_plot.legend(loc="lower right", fontsize=9)
+
+    canvas = FigureCanvas(fig)
+    canvas.draw()
+    width, height = canvas.get_width_height()
+    frame = np.frombuffer(canvas.tostring_rgb(), dtype=np.uint8).reshape((height, width, 3))
+    plt.close(fig)
+    return frame
+
+
+def save_video(frames: List[np.ndarray], out_path: str, fps: int = 4) -> None:
+    """
+    将一组 RGB 帧写成 MP4 视频。优先使用 OpenCV；若不可用则尝试 imageio；
+    若都不可用则导出为 PNG 序列。
+    """
+    if not frames:
+        return
+    os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
+    h, w = frames[0].shape[0], frames[0].shape[1]
+
+    if cv2 is not None:
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        writer = cv2.VideoWriter(out_path, fourcc, fps, (w, h))
+        for fr in frames:
+            if fr.shape[0] != h or fr.shape[1] != w:
+                fr = cv2.resize(fr, (w, h))
+            bgr = fr[:, :, ::-1]
+            writer.write(bgr)
+        writer.release()
+        return
+
+    if imageio is not None:
+        with imageio.get_writer(out_path, fps=fps, codec="libx264") as writer:
+            for fr in frames:
+                writer.append_data(fr)
+        return
+
+    # 回退：导出 PNG 序列
+    frames_dir = os.path.splitext(out_path)[0] + "_frames"
+    os.makedirs(frames_dir, exist_ok=True)
+    for i, fr in enumerate(frames):
+        Image.fromarray(fr).save(os.path.join(frames_dir, f"frame_{i:05d}.png"))
+
+
+# ==========================
+# 5.1 设定确定性与随机种子
+# ==========================
+def set_global_determinism(seed: int = 0) -> None:
+    random.seed(seed)
+    np.random.seed(seed)
+    try:
+        torch.manual_seed(seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(seed)
+        try:
+            torch.use_deterministic_algorithms(True)  # 可能在少数算子上抛异常
+        except Exception:
+            pass
+        try:
+            import torch.backends.cudnn as cudnn  # type: ignore
+            cudnn.deterministic = True
+            cudnn.benchmark = False
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+
+# ==========================
 # 4. 构造 Qwen 消息
 # ==========================
 from typing import List, Tuple, Optional
@@ -154,21 +300,9 @@ def build_qwen_messages(
             content.append({"type": "text", "text": text})
             content.append({"type": "image", "image": img})
 
-        # 让模型先分析这些 demo 为什么是这样的百分比
-        analysis_instruction = (
-            "\nBefore predicting completion for the new episode, analyze the above example frames.\n"
-            "Explain in concise bullet points WHY the given task completion percentages for the example frames "
-            "are reasonable, focusing on visual cues such as:\n"
-            "- relative positions and distances between key objects,\n"
-            "- orientation or alignment of objects,\n"
-            "- whether the goal object is approaching or already at the target location,\n"
-            "- partial vs. full contact or placement.\n\n"
-            "This analysis should only refer to the EXAMPLE frames and their given percentages.\n"
-        )
-        content.append({"type": "text", "text": analysis_instruction})
 
     # ---- Initial scene（target 轨迹的第一帧）----
-    content.append({"type": "text", "text": "\nAfter you finish your analysis of the example frames, you will estimate the completion for the new episode.\n\n"})
+    content.append({"type": "text", "text": "\nNow you will estimate the completion for the new episode.\n\n"})
     content.append({"type": "text", "text": "\nInitial robot scene (new episode):\n"})
     content.append({"type": "image", "image": initial_frame})
     content.append({
@@ -255,6 +389,8 @@ def run_gvl_qwen_for_trajectory(
         generated_ids = model.generate(
             **inputs,
             max_new_tokens=max_new_tokens,
+            do_sample=False,
+            temperature=0.0,
         )
 
     # 截掉 prompt 部分，只保留新生成的 token
@@ -292,8 +428,22 @@ def main():
     )
     processor = AutoProcessor.from_pretrained(model_name)
 
-    for frame_id in range(1,len(list_image_paths(target_traj_folder)),5):
-        expected_progress = 100.0 * frame_id / (len(list_image_paths(target_traj_folder)) - 1)
+    # ===== 生成带进度变化图的视频 =====
+    set_global_determinism(seed=0)
+    try:
+        model.eval()
+    except Exception:
+        pass
+    target_img_paths = list_image_paths(target_traj_folder)
+    frame_indices = list(range(1, len(target_img_paths), 5))
+    predicted_list: List[Optional[float]] = []
+    expected_list: List[Optional[float]] = []
+    composite_frames: List[np.ndarray] = []
+    output_video_path = "outputs/progress_video.mp4"
+    fps = 4
+
+    for frame_id in frame_indices:
+        expected_progress = 100.0 * frame_id / (len(target_img_paths) - 1)
         output_text = run_gvl_qwen_for_trajectory(
             model=model,
             processor=processor,
@@ -347,7 +497,17 @@ def main():
                 print(f"Parsed -> Progress: {parsed_pct:.2f}%")
         else:
             print("Parsed -> Progress: <unparsed>")
-        print(f"Expected progress: {expected_progress:.2f}%")
+        print(f"Expected progress for frame {frame_id}: {expected_progress:.2f}%")
+        # 聚合并渲染
+        predicted_list.append(parsed_pct if parsed_pct is not None else np.nan)
+        expected_list.append(expected_progress)
+        cur_img = Image.open(target_img_paths[frame_id]).convert("RGB")
+        comp = render_progress_frame(cur_img, predicted_list, expected_list)
+        composite_frames.append(comp)
+
+    # 写出视频
+    save_video(composite_frames, output_video_path, fps=fps)
+    print(f"Video saved to: {output_video_path}")
 
 if __name__ == "__main__":
     main()
