@@ -22,7 +22,7 @@ grad_accum_steps=1
 entry_file=qwenvl/train/train_qwen.py
 
 # Dataset configuration (replace with public dataset names)
-datasets=demo
+datasets=example
 
 # Output configuration
 run_name="qwen2vl-1gpu-test"
