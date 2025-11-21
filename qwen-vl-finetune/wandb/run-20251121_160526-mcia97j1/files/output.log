@@ -1,0 +1,81 @@
+  0%|                                                                                                      | 0/300000 [00:00<?, ?it/s]Traceback (most recent call last):
+  File "/home/erdao/Documents/Qwen3-VL/qwen-vl-finetune/qwenvl/train/train_qwen.py", line 206, in <module>
+    train(attn_implementation="flash_attention_2")
+  File "/home/erdao/Documents/Qwen3-VL/qwen-vl-finetune/qwenvl/train/train_qwen.py", line 195, in train
+    trainer.train()
+  File "/home/erdao/miniconda3/envs/qwen-train/lib/python3.10/site-packages/transformers/trainer.py", line 2325, in train
+    return inner_training_loop(
+  File "/home/erdao/miniconda3/envs/qwen-train/lib/python3.10/site-packages/transformers/trainer.py", line 2618, in _inner_training_loop
+    batch_samples, num_items_in_batch = self.get_batch_samples(epoch_iterator, num_batches, args.device)
+  File "/home/erdao/miniconda3/envs/qwen-train/lib/python3.10/site-packages/transformers/trainer.py", line 5654, in get_batch_samples
+    batch_samples.append(next(epoch_iterator))
+  File "/home/erdao/miniconda3/envs/qwen-train/lib/python3.10/site-packages/accelerate/data_loader.py", line 566, in __iter__
+    current_batch = next(dataloader_iter)
+  File "/home/erdao/miniconda3/envs/qwen-train/lib/python3.10/site-packages/torch/utils/data/dataloader.py", line 708, in __next__
+    data = self._next_data()
+  File "/home/erdao/miniconda3/envs/qwen-train/lib/python3.10/site-packages/torch/utils/data/dataloader.py", line 1480, in _next_data
+    return self._process_data(data)
+  File "/home/erdao/miniconda3/envs/qwen-train/lib/python3.10/site-packages/torch/utils/data/dataloader.py", line 1505, in _process_data
+    data.reraise()
+  File "/home/erdao/miniconda3/envs/qwen-train/lib/python3.10/site-packages/torch/_utils.py", line 733, in reraise
+    raise exception
+ValueError: Caught ValueError in DataLoader worker process 0.
+Original Traceback (most recent call last):
+  File "/home/erdao/miniconda3/envs/qwen-train/lib/python3.10/site-packages/torch/utils/data/_utils/worker.py", line 349, in _worker_loop
+    data = fetcher.fetch(index)  # type: ignore[possibly-undefined]
+  File "/home/erdao/miniconda3/envs/qwen-train/lib/python3.10/site-packages/torch/utils/data/_utils/fetch.py", line 52, in fetch
+    data = [self.dataset[idx] for idx in possibly_batched_index]
+  File "/home/erdao/miniconda3/envs/qwen-train/lib/python3.10/site-packages/torch/utils/data/_utils/fetch.py", line 52, in <listcomp>
+    data = [self.dataset[idx] for idx in possibly_batched_index]
+  File "/home/erdao/Documents/Qwen3-VL/qwen-vl-finetune/qwenvl/data/data_processor.py", line 388, in __getitem__
+    raise e
+  File "/home/erdao/Documents/Qwen3-VL/qwen-vl-finetune/qwenvl/data/data_processor.py", line 385, in __getitem__
+    sample = self.item_fn(sources)
+  File "/home/erdao/Documents/Qwen3-VL/qwen-vl-finetune/qwenvl/data/data_processor.py", line 391, in _get_item
+    data_dict = preprocess_qwen_visual(
+  File "/home/erdao/Documents/Qwen3-VL/qwen-vl-finetune/qwenvl/data/data_processor.py", line 211, in preprocess_qwen_visual
+    messages = _build_messages(source, base_path)
+  File "/home/erdao/Documents/Qwen3-VL/qwen-vl-finetune/qwenvl/data/data_processor.py", line 171, in _build_messages
+    raise ValueError(
+ValueError: Number of <image> placeholders exceeds the number of provided images
+
+[rank0]: Traceback (most recent call last):
+[rank0]:   File "/home/erdao/Documents/Qwen3-VL/qwen-vl-finetune/qwenvl/train/train_qwen.py", line 206, in <module>
+[rank0]:     train(attn_implementation="flash_attention_2")
+[rank0]:   File "/home/erdao/Documents/Qwen3-VL/qwen-vl-finetune/qwenvl/train/train_qwen.py", line 195, in train
+[rank0]:     trainer.train()
+[rank0]:   File "/home/erdao/miniconda3/envs/qwen-train/lib/python3.10/site-packages/transformers/trainer.py", line 2325, in train
+[rank0]:     return inner_training_loop(
+[rank0]:   File "/home/erdao/miniconda3/envs/qwen-train/lib/python3.10/site-packages/transformers/trainer.py", line 2618, in _inner_training_loop
+[rank0]:     batch_samples, num_items_in_batch = self.get_batch_samples(epoch_iterator, num_batches, args.device)
+[rank0]:   File "/home/erdao/miniconda3/envs/qwen-train/lib/python3.10/site-packages/transformers/trainer.py", line 5654, in get_batch_samples
+[rank0]:     batch_samples.append(next(epoch_iterator))
+[rank0]:   File "/home/erdao/miniconda3/envs/qwen-train/lib/python3.10/site-packages/accelerate/data_loader.py", line 566, in __iter__
+[rank0]:     current_batch = next(dataloader_iter)
+[rank0]:   File "/home/erdao/miniconda3/envs/qwen-train/lib/python3.10/site-packages/torch/utils/data/dataloader.py", line 708, in __next__
+[rank0]:     data = self._next_data()
+[rank0]:   File "/home/erdao/miniconda3/envs/qwen-train/lib/python3.10/site-packages/torch/utils/data/dataloader.py", line 1480, in _next_data
+[rank0]:     return self._process_data(data)
+[rank0]:   File "/home/erdao/miniconda3/envs/qwen-train/lib/python3.10/site-packages/torch/utils/data/dataloader.py", line 1505, in _process_data
+[rank0]:     data.reraise()
+[rank0]:   File "/home/erdao/miniconda3/envs/qwen-train/lib/python3.10/site-packages/torch/_utils.py", line 733, in reraise
+[rank0]:     raise exception
+[rank0]: ValueError: Caught ValueError in DataLoader worker process 0.
+[rank0]: Original Traceback (most recent call last):
+[rank0]:   File "/home/erdao/miniconda3/envs/qwen-train/lib/python3.10/site-packages/torch/utils/data/_utils/worker.py", line 349, in _worker_loop
+[rank0]:     data = fetcher.fetch(index)  # type: ignore[possibly-undefined]
+[rank0]:   File "/home/erdao/miniconda3/envs/qwen-train/lib/python3.10/site-packages/torch/utils/data/_utils/fetch.py", line 52, in fetch
+[rank0]:     data = [self.dataset[idx] for idx in possibly_batched_index]
+[rank0]:   File "/home/erdao/miniconda3/envs/qwen-train/lib/python3.10/site-packages/torch/utils/data/_utils/fetch.py", line 52, in <listcomp>
+[rank0]:     data = [self.dataset[idx] for idx in possibly_batched_index]
+[rank0]:   File "/home/erdao/Documents/Qwen3-VL/qwen-vl-finetune/qwenvl/data/data_processor.py", line 388, in __getitem__
+[rank0]:     raise e
+[rank0]:   File "/home/erdao/Documents/Qwen3-VL/qwen-vl-finetune/qwenvl/data/data_processor.py", line 385, in __getitem__
+[rank0]:     sample = self.item_fn(sources)
+[rank0]:   File "/home/erdao/Documents/Qwen3-VL/qwen-vl-finetune/qwenvl/data/data_processor.py", line 391, in _get_item
+[rank0]:     data_dict = preprocess_qwen_visual(
+[rank0]:   File "/home/erdao/Documents/Qwen3-VL/qwen-vl-finetune/qwenvl/data/data_processor.py", line 211, in preprocess_qwen_visual
+[rank0]:     messages = _build_messages(source, base_path)
+[rank0]:   File "/home/erdao/Documents/Qwen3-VL/qwen-vl-finetune/qwenvl/data/data_processor.py", line 171, in _build_messages
+[rank0]:     raise ValueError(
+[rank0]: ValueError: Number of <image> placeholders exceeds the number of provided images

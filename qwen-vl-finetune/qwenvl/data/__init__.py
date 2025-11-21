@@ -29,7 +29,10 @@ DEMO_DATA = {
     "annotation_path": "/home/erdao/Documents/Qwen3-VL/qwen-vl-finetune/demo/single_images.json",
     "data_path": "/home/erdao/Documents/Qwen3-VL/qwen-vl-finetune",
 }
-
+EXAMPLE_DATA = {
+    "annotation_path": "/home/erdao/Documents/Qwen3-VL/qwen-vl-finetune/Example_data/dataset/train/L10K3TurnOnTheStoveAndPutTheMokaPotOnIt.json",
+    "data_path": "/home/erdao/Documents/Qwen3-VL/qwen-vl-finetune",
+}
 data_dict = {
     "cambrian_737k": CAMBRIAN_737K,
     "cambrian_737k_pack": CAMBRIAN_737K_PACK,
@@ -37,6 +40,7 @@ data_dict = {
     "clevr_mc": CLEVR_MC,
     "videochatgpt": VIDEOCHATGPT,
     "demo": DEMO_DATA,
+    "example": EXAMPLE_DATA,
 }
 
 
