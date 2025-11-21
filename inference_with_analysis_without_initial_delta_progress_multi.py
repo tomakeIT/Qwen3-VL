@@ -358,6 +358,294 @@ def build_qwen_messages(
 
 
 # ==========================
+# 4*. 多视角（与数据生成一致）的消息构造
+# ==========================
+
+def compute_abs_progress_from_index_int(idx: int, total: int) -> int:
+    if total <= 1:
+        return 0
+    c = idx / float(total - 1)
+    return int(round(100.0 * c))
+
+
+def build_qwen_messages_multiview(
+    task_desc: str,
+    ref_steps_views: List[List[Image.Image]],  # [[v1_img, v2_img, v3_img], step2..., ...]
+    ref_progress_ints: List[int],              # [int, int, ...] len == len(ref_steps_views)
+    target_t1_views: List[Image.Image],        # [v1, v2, v3] for Image-1
+    target_t2_views: List[Image.Image],        # [v1, v2, v3] for Image-2
+    view_names_order: List[str],               # ["first_person_camera", "left_hand_camera", "right_hand_camera"]
+) -> list:
+    """
+    构造与 LightwheelData/preprocessing/build_vlac_progress_json.py 一致的提示与图片顺序：
+    - 若有 reference：逐步展示多步参考，每步多视角，附绝对进度整数
+    - 然后展示目标 episode 的 Image-1 与 Image-2（多视角）
+    - 输出要求：仅返回整数 D = round(P2 - P1)，范围 [-100, 100]
+    """
+    content = []
+
+    # 开场任务说明
+    content.append({"type": "text", "text": (
+        "You are a robotic task progress evaluator.\n\n"
+        f"Task description: {task_desc}\n\n"
+        "You will first see several time steps from a reference demonstration of this task.\n"
+        "Each time step contains multiple synchronized camera views and is annotated with its\n"
+        "absolute task completion percentage (an integer between 0 and 100).\n"
+        "Then you will see two time steps (Image-1 and Image-2) from another episode of the SAME task,\n"
+        "also with multiple camera views.\n\n"
+    )})
+
+    # Reference 部分
+    if ref_steps_views and ref_progress_ints:
+        content.append({"type": "text", "text": (
+            "Here are example time steps from a reference demonstration with their absolute completion percentages.\n"
+            "For each time step, the views are given in the following fixed order:\n"
+            "  - " + ", ".join(view_names_order) + "\n\n"
+        )})
+
+        assert len(ref_steps_views) == len(ref_progress_ints), "ref steps and progress length mismatch"
+        for step_idx, (views_imgs, prog) in enumerate(zip(ref_steps_views, ref_progress_ints), start=1):
+            content.append({"type": "text", "text": f"Reference Time Step {step_idx}:\n"})
+            for v_name, v_img in zip(view_names_order, views_imgs):
+                content.append({"type": "text", "text": f"- View {v_name}: "})
+                content.append({"type": "image", "image": v_img})
+                content.append({"type": "text", "text": "\n"})
+            content.append({"type": "text", "text": f"The task completion percentage for this time step is {prog:d}%.\n\n"})
+    else:
+        content.append({"type": "text", "text": (
+            "No reference demonstration is available for this task. Please rely on your general understanding.\n\n"
+        )})
+
+    # 目标多视角 Image-1 / Image-2
+    content.append({"type": "text", "text": (
+        "Now consider another episode of the SAME task.\n"
+        "We will show you two time steps from this episode, each with the following camera views\n"
+        "in the exact order they are provided:\n"
+        "  - " + ", ".join(view_names_order) + "\n\n"
+    )})
+
+    # Image-1
+    content.append({"type": "text", "text": "Image-1 (earlier or reference time step):\n"})
+    for v_name, v_img in zip(view_names_order, target_t1_views):
+        content.append({"type": "text", "text": f"- View {v_name}: "})
+        content.append({"type": "image", "image": v_img})
+        content.append({"type": "text", "text": "\n"})
+
+    # Image-2
+    content.append({"type": "text", "text": "\nImage-2 (another time step of the same episode):\n"})
+    for v_name, v_img in zip(view_names_order, target_t2_views):
+        content.append({"type": "text", "text": f"- View {v_name}: "})
+        content.append({"type": "image", "image": v_img})
+        content.append({"type": "text", "text": "\n"})
+
+    # 输出要求（严格整数，且仅输出一个值）
+    content.append({"type": "text", "text": (
+        "\nLet the task completion percentages of Image-1 and Image-2 be P1 and P2 (both between 0 and 100).\n"
+        "Your job is to output the integer delta progress D = round(P2 - P1),\n"
+        "which must be an integer between -100 and 100 (inclusive).\n\n"
+        "OUTPUT REQUIREMENT:\n"
+        "- Return ONLY the integer D (with optional leading '+' or '-' sign),\n"
+        "  e.g., +5, -13, 0, +42, -100, +100.\n"
+        "- Do NOT output any explanation, percent sign, or extra text.\n"
+    )})
+
+    messages = [{"role": "user", "content": content}]
+    return messages
+
+
+# ==========================
+# 4**. 多视角数据读取（与训练目录结构一致）
+# ==========================
+
+def list_subdirs(path: str) -> List[str]:
+    return sorted([d for d in os.listdir(path) if (Path(path) / d).is_dir()])
+
+
+def list_image_files(path: str) -> List[Path]:
+    p = Path(path)
+    files = [f for f in sorted(p.iterdir()) if f.is_file() and f.suffix.lower() in IMG_EXTS]
+    return files
+
+
+def load_multiview_frames_for_indices(
+    demo_folder: str,
+    view_names: List[str],
+    indices: List[int],
+) -> List[List[Image.Image]]:
+    """
+    返回形如 [[view1_img, view2_img, view3_img], ...]，每个内部列表对应一个 time step。
+    """
+    # 为每个视角列出帧文件
+    view_to_files: Dict[str, List[Path]] = {}
+    for v in view_names:
+        v_path = Path(demo_folder) / v
+        if not v_path.exists():
+            raise FileNotFoundError(f"View folder not found: {v_path}")
+        files = list_image_files(str(v_path))
+        if len(files) == 0:
+            raise ValueError(f"No images under view {v}: {v_path}")
+        view_to_files[v] = files
+
+    T = min(len(files) for files in view_to_files.values())
+    if any(idx < 0 or idx >= T for idx in indices):
+        raise IndexError(f"indices out of range for min length {T}: {indices}")
+
+    steps: List[List[Image.Image]] = []
+    for idx in indices:
+        imgs_step: List[Image.Image] = []
+        for v in view_names:
+            img = Image.open(view_to_files[v][idx]).convert("RGB")
+            imgs_step.append(img)
+        steps.append(imgs_step)
+    return steps
+
+
+def evenly_spaced_indices_with_jitter(T: int, num_steps: int, jitter: int = 0, seed: int = 0) -> List[int]:
+    rng = random.Random(seed)
+    if T <= 0:
+        return []
+    if T <= num_steps:
+        base_indices = list(range(T))
+    else:
+        base_indices = [int(round(i * (T - 1) / (num_steps - 1))) for i in range(num_steps)]
+    indices: List[int] = []
+    for idx in base_indices:
+        offset = rng.randint(-jitter, jitter) if jitter > 0 else 0
+        j_idx = max(0, min(T - 1, idx + offset))
+        indices.append(j_idx)
+    indices = sorted(set(indices))
+    return indices
+
+
+def prepare_multiview_reference(
+    ref_demo_folder: Optional[str],
+    view_names: List[str],
+    num_ref_frames: int = 4,
+    jitter: int = 2,
+    seed: int = 0,
+) -> Tuple[List[List[Image.Image]], List[int]]:
+    """
+    读取参考演示，多视角多时刻，返回 (ref_steps_views, ref_progress_ints)。
+    若未提供 ref_demo_folder，则返回空参考（与训练脚本一致的 fallback）。
+    """
+    if not ref_demo_folder:
+        return [], []
+
+    # 为每个视角列出帧
+    view_to_files: Dict[str, List[Path]] = {}
+    for v in view_names:
+        v_dir = Path(ref_demo_folder) / v
+        if not v_dir.exists():
+            return [], []  # 没有齐备视角则不提供 reference
+        view_to_files[v] = list_image_files(str(v_dir))
+        if len(view_to_files[v]) == 0:
+            return [], []
+
+    T_ref = min(len(frames) for frames in view_to_files.values())
+    if T_ref == 0:
+        return [], []
+
+    indices = evenly_spaced_indices_with_jitter(T_ref, num_ref_frames, jitter=jitter, seed=seed)
+    if not indices:
+        return [], []
+
+    ref_steps: List[List[Image.Image]] = []
+    ref_prog_ints: List[int] = []
+    for idx in indices:
+        step_imgs: List[Image.Image] = []
+        for v in view_names:
+            img = Image.open(view_to_files[v][idx]).convert("RGB")
+            step_imgs.append(img)
+        ref_steps.append(step_imgs)
+        ref_prog_ints.append(compute_abs_progress_from_index_int(idx, T_ref))
+    return ref_steps, ref_prog_ints
+
+
+# ==========================
+# 6*. 多视角两时刻（Δ进度）推理流程
+# ==========================
+
+def run_multiview_delta_inference(
+    model,
+    processor,
+    task_description: str,
+    target_demo_folder: str,
+    t1_index: int,
+    t2_index: int,
+    view_names: List[str],
+    ref_demo_folder: Optional[str] = None,
+    num_ref_frames: int = 4,
+    ref_jitter: int = 2,
+    seed: int = 0,
+    max_new_tokens: int = 64,
+):
+    # 准备 reference（可选）
+    ref_steps, ref_prog_ints = prepare_multiview_reference(
+        ref_demo_folder=ref_demo_folder,
+        view_names=view_names,
+        num_ref_frames=num_ref_frames,
+        jitter=ref_jitter,
+        seed=seed,
+    )
+
+    # 准备目标两时刻（同一 demo 下多视角）
+    # 为每个视角列出帧文件，取最短长度为 T，确保索引有效
+    view_to_files: Dict[str, List[Path]] = {}
+    for v in view_names:
+        v_dir = Path(target_demo_folder) / v
+        if not v_dir.exists():
+            raise FileNotFoundError(f"View folder not found: {v_dir}")
+        files = list_image_files(str(v_dir))
+        if len(files) < 2:
+            raise ValueError(f"Not enough frames under {v_dir}")
+        view_to_files[v] = files
+    T = min(len(files) for files in view_to_files.values())
+    if not (0 <= t1_index < T and 0 <= t2_index < T):
+        raise IndexError(f"t1_index/t2_index out of range for T={T}")
+
+    t1_views: List[Image.Image] = []
+    t2_views: List[Image.Image] = []
+    for v in view_names:
+        t1_views.append(Image.open(view_to_files[v][t1_index]).convert("RGB"))
+        t2_views.append(Image.open(view_to_files[v][t2_index]).convert("RGB"))
+
+    messages = build_qwen_messages_multiview(
+        task_desc=task_description,
+        ref_steps_views=ref_steps,
+        ref_progress_ints=ref_prog_ints,
+        target_t1_views=t1_views,
+        target_t2_views=t2_views,
+        view_names_order=view_names,
+    )
+
+    inputs = processor.apply_chat_template(
+        messages,
+        tokenize=True,
+        add_generation_prompt=True,
+        return_dict=True,
+        return_tensors="pt",
+    ).to(model.device)
+
+    with torch.no_grad():
+        generated_ids = model.generate(
+            **inputs,
+            max_new_tokens=max_new_tokens,
+            do_sample=False,
+            temperature=0.0,
+        )
+
+    generated_ids_trimmed = [
+        out_ids[len(in_ids):]
+        for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
+    ]
+    output_texts = processor.batch_decode(
+        generated_ids_trimmed,
+        skip_special_tokens=True,
+        clean_up_tokenization_spaces=False,
+    )
+    return output_texts[0]
+
+# ==========================
 # 6. 完整流程：给一个目标轨迹跑一次
 # ==========================
 
@@ -434,12 +722,25 @@ def run_gvl_qwen_for_trajectory(
 # ==========================
 
 def main():
-    # ===== 需要你修改的部分 =====
-    task_description = "put the white mug on the plate"
-    demo_traj_folder = "data/1/right_shoulder"
-    target_traj_folder = "data/2/right_shoulder"
-    frame_id = 32
-    expected_progress = 100.0 * frame_id / (len(list_image_paths(target_traj_folder)) - 1)
+    # ===== 推理参数（与数据集生成保持一致的多视角与提示）=====
+    task_description = "Close the microwave"
+    view_names = ["first_person_camera", "left_hand_camera", "right_hand_camera"]
+
+    # 参考 demo（可选）：若不想提供参考，设为 None
+    # 可根据你的数据实际路径修改为对应 task/demo 目录（包含上述视角子目录）
+    ref_demo_folder = "Example_data/L90K6CloseTheMicrowave/L90K6CloseTheMicrowave_1757730832298644"
+
+    # 目标 demo：从同一任务的另一个 episode 里选两个时刻做 delta
+    target_demo_folder = "Example_data/L90K6CloseTheMicrowave/L90K6CloseTheMicrowave_1757730544608118"
+    # 选择两个帧索引（根据你目录下帧的数量与排序进行调整）
+    t1_index = 29
+    t2_index = 16
+    print(f"expetected delta progress: {(t2_index - t1_index/30 *100)}")
+
+    # 参考 steps 的数量与抖动，可与训练构造脚本参数风格一致
+    num_ref_frames = 4
+    ref_jitter = 2
+
     # ===== 加载模型 =====
     model_name = "models/Qwen-VL-2B-Instruct"
     print(f"Loading model: {model_name}")
@@ -451,101 +752,44 @@ def main():
     )
     processor = AutoProcessor.from_pretrained(model_name)
 
-    # ===== 生成带进度变化图的视频 =====
     set_global_determinism(seed=0)
     try:
         model.eval()
     except Exception:
         pass
-    target_img_paths = list_image_paths(target_traj_folder)
-    frame_indices = list(range(1, len(target_img_paths), 5))
-    predicted_list: List[Optional[float]] = []
-    expected_list: List[Optional[float]] = []
-    composite_frames: List[np.ndarray] = []
-    output_video_path = "outputs/progress_video.mp4"
-    fps = 4
 
-    # 维护上一帧的额外上下文（第二次及之后使用）
-    prev_target_image = None
-    prev_predicted_progress = None
+    # ===== 运行多视角 Δ进度推理 =====
+    output_text = run_multiview_delta_inference(
+        model=model,
+        processor=processor,
+        task_description=task_description,
+        target_demo_folder=target_demo_folder,
+        t1_index=t1_index,
+        t2_index=t2_index,
+        view_names=view_names,
+        ref_demo_folder=ref_demo_folder,
+        num_ref_frames=num_ref_frames,
+        ref_jitter=ref_jitter,
+        seed=0,
+        max_new_tokens=64,
+    )
+    print("=== Raw model output ===")
+    print(output_text)
+    print("========================")
 
-    for frame_id in frame_indices:
-        expected_progress = 100.0 * frame_id / (len(target_img_paths) - 1)
-        output_text = run_gvl_qwen_for_trajectory(
-            model=model,
-            processor=processor,
-            task_description=task_description,
-            target_traj_folder=target_traj_folder,
-            demo_traj_folder=demo_traj_folder,
-            seed=0,
-            frame_id=frame_id,
-            num_demo_frames=12,
-            max_new_tokens=2048,
-            prev_target_image=prev_target_image,
-            prev_predicted_progress=prev_predicted_progress,
-        )
-        print("=== Raw model output ===")
-        print(output_text)
-        print("========================")
-        # 解析模型输出：期望格式
-        # "Frame 1: Frame Description: <short description>, Task Completion Percentages: <number>%"
-        def _parse_completion_output(text: str):
-            """
-            从模型输出中解析出描述与百分比。返回 (percent_float, description)；
-            若无法解析，返回 (None, None)。
-            """
-            # 优先匹配明确格式
-            m = re.search(
-                r"Frame\s*\d+\s*:\s*Frame\s*Description\s*:\s*(.*?),\s*Task\s*Completion\s*Percentages\s*:\s*([0-9]+(?:\.[0-9]+)?)\s*%",
-                text,
-                flags=re.IGNORECASE | re.DOTALL,
-            )
-            if m:
-                desc = m.group(1).strip()
-                try:
-                    pct = float(m.group(2))
-                    return pct, desc
-                except ValueError:
-                    pass
-            # 退而求其次：抓取任意 -100~100 的数字（可带或不带百分号，最后一个最可能为答案）
-            candidates = re.findall(r"(-?[0-9]+(?:\.[0-9]+)?)\s*%?", text)
-            if candidates:
-                try:
-                    pct = float(candidates[-1])
-                    if -100.0 <= pct <= 100.0:
-                        return pct, None
-                except ValueError:
-                    pass
-            return None, None
-
-        parsed_pct, parsed_desc = _parse_completion_output(output_text)
-        if parsed_pct is not None:
-            last_abs = prev_predicted_progress if prev_predicted_progress is not None else 0.0
-            abs_pred = max(0.0, min(100.0, last_abs + parsed_pct))
-            if parsed_desc:
-                print(f"Parsed -> Delta: {parsed_pct:.2f}, Abs: {abs_pred:.2f}%, Description: {parsed_desc}")
+    # 解析只包含一个整数 D 的输出（允许带 + / - 号）
+    m = re.search(r"([+-]?\d+)", output_text.strip())
+    if m:
+        try:
+            d = int(m.group(1))
+            if d < -100 or d > 100:
+                print(f"[WARN] Parsed delta out of range: {d}")
             else:
-                print(f"Parsed -> Delta: {parsed_pct:.2f}, Abs: {abs_pred:.2f}%")
-        else:
-            print("Parsed -> Progress: <unparsed>")
-        print(f"Expected progress for frame {frame_id}: {expected_progress:.2f}%")
-        # 聚合并渲染
-        if parsed_pct is not None:
-            predicted_list.append(abs_pred)
-        else:
-            predicted_list.append(np.nan)
-        expected_list.append(expected_progress)
-        cur_img = Image.open(target_img_paths[frame_id]).convert("RGB")
-        comp = render_progress_frame(cur_img, predicted_list, expected_list)
-        composite_frames.append(comp)
-
-        # 更新上一帧的额外上下文（仅在成功解析出进度时启用）
-        prev_target_image = cur_img
-        prev_predicted_progress = abs_pred if parsed_pct is not None else None
-
-    # 写出视频
-    save_video(composite_frames, output_video_path, fps=fps)
-    print(f"Video saved to: {output_video_path}")
+                print(f"Parsed delta progress D = {d:+d}")
+        except Exception:
+            print("[WARN] Failed to parse integer delta from output.")
+    else:
+        print("[WARN] No integer delta found in output.")
 
 if __name__ == "__main__":
     main()
