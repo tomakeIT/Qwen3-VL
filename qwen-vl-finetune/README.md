@@ -26,16 +26,20 @@ The `qwenvl` directory contains the following components:
 ## Requirements
 
 You could use follow version of packages:
+pip install \
+  torch==2.6.0 \
+  torchvision==0.21.0 \
+  transformers==4.57.1 \
+  deepspeed==0.17.1 
+  
+pip install "flash-attn==2.7.4.post1" --no-build-isolation
 
-- `torch==2.6.0`
-- `torchvision==0.21.0`
-- `transformers==4.57.0.dev0`
-- `deepspeed==0.17.1`
-- `flash_attn==2.7.4.post1`
-- `triton==3.2.0`
-- `accelerate==1.7.0`
-- `torchcodec==0.2`
-- `peft==0.17.1`
+pip install \
+  triton==3.2.0 \
+  accelerate==1.7.0 \
+  torchcodec==0.2 \
+  peft==0.17.1
+
 
 ## Custom Dataset Configuration
 

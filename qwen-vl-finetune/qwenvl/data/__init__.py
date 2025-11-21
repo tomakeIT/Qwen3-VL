@@ -25,6 +25,10 @@ VIDEOCHATGPT = {
     "annotation_path": "PATH_TO_VIDEOCHATGPT_ANNOTATION",
     "data_path": "PATH_TO_VIDEOCHATGPT_DATA",
 }
+DEMO_DATA = {
+    "annotation_path": "/home/erdao/Documents/Qwen3-VL/qwen-vl-finetune/demo/single_images.json",
+    "data_path": "/home/erdao/Documents/Qwen3-VL/qwen-vl-finetune",
+}
 
 data_dict = {
     "cambrian_737k": CAMBRIAN_737K,
@@ -32,6 +36,7 @@ data_dict = {
     "mp_doc": MP_DOC,
     "clevr_mc": CLEVR_MC,
     "videochatgpt": VIDEOCHATGPT,
+    "demo": DEMO_DATA,
 }
 
 

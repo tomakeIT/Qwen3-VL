@@ -26,16 +26,16 @@
       ]
     },
     {
-      "image": "demo/images/10149.png",
+      "image": ["demo/images/10149.png", "demo/images/10150.png"],
       "conversations": [
         {
           "from": "human",
-          "value": "In which year the value was 51?\n<image>"
+          "value": "In which year the value was 51?\n<image> and jjj \n<image>"
         },
         {
           "from": "gpt",
           "value": "2014"
         }
       ]
-    },
+    }
 ]
