@@ -30,56 +30,6 @@ os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
 # ==========================
 
 IMG_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
-VIDEO_EXTS = {".mp4", ".avi", ".mov", ".mkv", ".webm"}
-
-
-def is_video_file(path: str) -> bool:
-    p = Path(path)
-    return p.is_file() and p.suffix.lower() in VIDEO_EXTS
-
-
-def load_video_frames(video_path: str) -> List[Image.Image]:
-    frames: List[Image.Image] = []
-    if cv2 is not None:
-        cap = cv2.VideoCapture(video_path)
-        if not cap.isOpened():
-            raise ValueError(f"Cannot open video: {video_path}")
-        while True:
-            ret, frame = cap.read()
-            if not ret:
-                break
-            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            frames.append(Image.fromarray(rgb))
-        cap.release()
-    elif imageio is not None:
-        try:
-            reader = imageio.get_reader(video_path)
-            for fr in reader:
-                if isinstance(fr, np.ndarray):
-                    img = Image.fromarray(fr).convert("RGB")
-                else:
-                    img = Image.fromarray(np.asarray(fr)).convert("RGB")
-                frames.append(img)
-            reader.close()
-        except Exception as e:
-            raise ValueError(f"Failed to read video via imageio: {video_path}, err={e}")
-    else:
-        raise RuntimeError("Neither OpenCV nor imageio is available to read videos.")
-    if not frames:
-        raise ValueError(f"No frames decoded from video: {video_path}")
-    return frames
-
-
-def load_frames_from_source(source: str) -> List[Image.Image]:
-    """
-    source 可以是帧文件夹或视频文件路径，返回 PIL.Image 列表（按时间顺序）。
-    """
-    if os.path.isdir(source):
-        img_paths = list_image_paths(source)
-        return [Image.open(p).convert("RGB") for p in img_paths]
-    if is_video_file(source):
-        return load_video_frames(source)
-    raise ValueError(f"Unsupported source: {source}")
 
 
 def list_image_paths(folder: str) -> List[Path]:
@@ -143,59 +93,24 @@ def build_demo_examples(
     return frames
 
 
-def build_demo_delta_examples(
-    demo_source: str,
-    num_example_pairs: int = 6,
-    seed: int = 0,
-) -> List[Tuple[Image.Image, Image.Image, float]]:
-    """
-    从 demo 源（视频或图像文件夹）中构造若干 (prev, curr, delta%) 示例对。
-    delta 定义为 curr 相对 prev 的进度增量（基于线性绝对进度），允许为正或负。
-    """
-    rng = random.Random(seed)
-    frames = load_frames_from_source(demo_source)
-    total = len(frames)
-    if total < 2:
-        raise ValueError(f"Not enough frames in demo source: {demo_source}")
-
-    examples: List[Tuple[Image.Image, Image.Image, float]] = []
-    # 线性绝对进度：progress[i] = 100 * i / (total-1)
-    # 随机采样若干对 (i, j)，i != j，可正可负
-    indices = list(range(total))
-    for _ in range(num_example_pairs):
-        i = rng.choice(indices[:-1])  # 保证至少有另一个不同帧
-        # 随机选择与 i 不同的 j
-        j_choices = [k for k in indices if k != i]
-        j = rng.choice(j_choices)
-        prev_idx, curr_idx = i, j
-        prev_img = frames[prev_idx]
-        curr_img = frames[curr_idx]
-        prev_prog = 100.0 * prev_idx / (total - 1)
-        curr_prog = 100.0 * curr_idx / (total - 1)
-        delta_pct = curr_prog - prev_prog  # 可正可负
-        examples.append((prev_img, curr_img, float(delta_pct)))
-    rng.shuffle(examples)
-    return examples
-
-
 # ==========================
 # 3. 构造目标轨迹帧（包含 shuffle）
 # ==========================
 
 def build_target_frames(
     traj_folder: str,
-    prev_frame_id: int,
-    curr_frame_id: int,
+    frame_id: int,
     seed: int = 0,
 ) -> Tuple[List[Image.Image], List[int], List[int]]:
     """
-    返回 [initial_image, previous_image, current_image]
     """
 
-    # 兼容帧文件夹或视频文件
-    frames_all = load_frames_from_source(traj_folder)
-    indices = [0, prev_frame_id, curr_frame_id]
-    frames_subsampled = [frames_all[idx] for idx in indices]
+    img_paths = list_image_paths(traj_folder)
+    # 子采样后的原始时间顺序帧
+    frames_subsampled = [
+        Image.open(img_paths[idx]).convert("RGB")
+        for idx in [0, frame_id]
+    ]
     return frames_subsampled
 
 
@@ -238,11 +153,11 @@ def render_progress_frame(
 
     # 右侧：曲线
     ax_plot = fig.add_subplot(gs[0, 1])
-    ax_plot.set_title("Delta Progress (%)", fontsize=10)
-    ax_plot.set_ylim(-100, 100)
+    ax_plot.set_title("Task Progress (%)", fontsize=10)
+    ax_plot.set_ylim(0, 100)
     ax_plot.set_xlim(1, max(2, len(predicted_progress_list)))
-    ax_plot.set_xlabel("Step Index")
-    ax_plot.set_ylabel("Delta Progress (%)")
+    ax_plot.set_xlabel("Frame Index")
+    ax_plot.set_ylabel("Progress (%)")
     ax_plot.grid(True, linestyle="--", alpha=0.3)
 
     xs = np.arange(1, len(predicted_progress_list) + 1, dtype=np.int32)
@@ -342,52 +257,54 @@ def build_qwen_messages(
     task_description: str,
     demo_examples: Optional[List[Tuple[Image.Image, float]]],
     target_frames: List[Image.Image],
-    demo_delta_examples: Optional[List[Tuple[Image.Image, Image.Image, float]]] = None,
+    prev_target_image: Optional[Image.Image] = None,
+    prev_predicted_progress: Optional[float] = None,
 ) -> list:
     """
-    利用 (initial_frame, previous_frame, current_frame) 构造 Qwen 的 messages，预测 current 相对 previous 的增量进度。
+    利用 reference demo + (initial_frame, target_frames) 构造 Qwen 的 messages。
 
     target_frames[0] 视为 initial scene (0%)，
-    target_frames[1] 为 previous frame，
-    target_frames[2] 为 current frame（需要预测相对 previous 的 delta）。
+    target_frames[1:] 为需要预测进度的目标帧（可以只有 1 个，也可以多张）。
     """
-    assert len(target_frames) >= 3, "target_frames 需要包含 initial、previous、current 三帧"
+    assert len(target_frames) >= 2, "target_frames 至少需要包含 initial + 1 个 target frame"
 
     initial_frame = target_frames[0]
-    previous_frame = target_frames[1]
-    current_frame = target_frames[2]
+    query_frames = target_frames[1:]
 
     content = []
 
-    # ---- 任务说明（强调delta为连续数值）----
+    # ---- 任务说明（强调是连续数值，不要只用 0 或 100）----
     intro_text = (
-        f"You are an expert roboticist tasked with estimating the DELTA in task completion percentage "
-        f"for a robot performing: {task_description}.\n"
-        "The delta percentage is a real-valued number between -100 and 100 (inclusive), "
-        "representing how much progress the current frame has made relative to the previous frame.\n"
-        "Positive values mean progress towards completion; negative values mean regression or undoing progress.\n"
-        "Values like -15, -3, 0, 12, 47, 95 are all valid.\n"
-        "0 means no additional progress compared to the previous frame. 100 means full completion happened within this step.\n\n"
+        f"You are an expert roboticist tasked with estimating continuous task completion percentages "
+        f"for a robot performing the task: {task_description}.\n"
+        "The task completion percentage is a real-valued number between 0 and 100 (inclusive).\n"
+        "Values like 3.0, 17.0, 42.0, 68.0, 91.0 are all valid. "
+        "Do not restrict yourself to only 0 or 100 unless you are very certain the task is exactly at the start or fully completed.\n"
+        "100 means the task is fully completed. 0 means the task has not started relative to the initial scene.\n\n"
+        "We will first show you some example frames with their ground-truth task completion percentages, "
+        "then an initial scene of a new episode and one or more target frames from the same episode. "
+        "Your job is to estimate the task completion percentage for each target frame relative to the initial scene.\n\n"
     )
     content.append({"type": "text", "text": intro_text})
 
-    # ---- In-context 示例部分（delta 示例对）----
-    if demo_delta_examples is not None and len(demo_delta_examples) > 0:
+    # ---- In-context 示例部分（demo 轨迹）----
+    if demo_examples is not None and len(demo_examples) > 0:
         content.append({
             "type": "text",
-            "text": "Here are example frame pairs with their delta task completion percentages:\n"
+            "text": "Here are example frames with their task completion percentages:\n"
         })
-        for i, (prev_img, curr_img, delta_pct) in enumerate(demo_delta_examples, start=1):
-            content.append({"type": "text", "text": f"\nExample {i}:\nPrevious frame (t-1):"})
-            content.append({"type": "image", "image": prev_img})
-            content.append({"type": "text", "text": "Current frame (t):"})
-            content.append({"type": "image", "image": curr_img})
-            content.append({"type": "text", "text": f"At this step, the delta task completion is {delta_pct:.1f}%.\n"})
+        for i, (img, prog) in enumerate(demo_examples, start=1):
+            # 文字 + 图片
+            text = (
+                f"\nExample Frame {i}: "
+                f"At this time, the task completion percentage is {prog:.1f}%.\n"
+            )
+            content.append({"type": "text", "text": text})
+            content.append({"type": "image", "image": img})
+
 
     # ---- Initial scene（target 轨迹的第一帧）----
     content.append({"type": "text", "text": "\nNow you will estimate the completion for the new episode.\n\n"})
-    content.append({"type": "text", "text": "\nInitial robot scene (new episode):\n"})
-    content.append({"type": "image", "image": initial_frame})
     content.append({
         "type": "text",
         "text": (
@@ -395,22 +312,39 @@ def build_qwen_messages(
         ),
     })
 
-    # ---- 说明如何预测 delta（previous -> current）----
+    # ---- 上一次预测的额外上下文（若提供）----
+    if (prev_target_image is not None) and (prev_predicted_progress is not None):
+        content.append({
+            "type": "text",
+            "text": (
+                "Additional context from the previous step:\n"
+                f"In the previous step, the model estimated the task completion percentage "
+                f"to be {prev_predicted_progress:.1f}% for the following frame:\n"
+            ),
+        })
+        content.append({"type": "image", "image": prev_target_image})
+        content.append({
+            "type": "text",
+            "text": (
+                "Use this only for reference. Now estimate the next target frame below.\n\n"
+            ),
+        })
+
+    # ---- 说明如何预测 target frame ----
     query_text = (
-        f"For the task of {task_description}, we now provide a previous frame and a current frame from the same episode.\n"
-        "Estimate the DELTA task completion percentage of the current frame RELATIVE TO the previous frame.\n\n"
-        "After your analysis, you MUST provide your numeric answer in the following EXACT format:\n"
-        "Delta Progress: <number between 0 and 100>%\n\n"
-        "Do not include extra text after the percent sign. Use intermediate values whenever appropriate.\n\n"
-        "Here are the reference frames:\n"
+        f"For the task of {task_description}, we now provide one target image from the same episode.\n"
+        "Estimate its task completion percentage relative to the initial scene.\n\n"
+        "OUTPUT REQUIREMENT: Return ONLY the delta task completion (current minus previous) as a number between -100 and 100 WITHOUT the '%' sign.\n"
+        "If previous-step context is provided above, compute delta relative to that previous percentage; otherwise compute delta relative to the initial scene which is defined as 0%.\n"
+        "Do NOT output any reasoning, analysis, words, or extra text. One line, just the number.\n\n"
+        "Now, here is the target image:\n"
     )
     content.append({"type": "text", "text": query_text})
 
-    # ---- 插入 previous 与 current ----
-    content.append({"type": "text", "text": f"\nPrevious frame (reference for delta):\n"})
-    content.append({"type": "image", "image": previous_frame})
-    content.append({"type": "text", "text": f"\nCurrent frame (estimate delta relative to previous):\n"})
-    content.append({"type": "image", "image": current_frame})
+    # ---- 逐个插入 target frame ----
+    for i, img in enumerate(query_frames, start=1):
+        content.append({"type": "text", "text": f"\nFrame {i} (target frame):\n"})
+        content.append({"type": "image", "image": img})
 
     messages = [
         {
@@ -434,34 +368,33 @@ def run_gvl_qwen_for_trajectory(
     target_traj_folder: str,
     demo_traj_folder: Optional[str] = None,
     seed: int = 0,
-    prev_frame_id: int = 15,
-    curr_frame_id: int = 20,
+    frame_id: int = 20,
     num_demo_frames: int = 12,
-    num_demo_pairs: int = 6,
     max_new_tokens: int = 256,
+    prev_target_image: Optional[Image.Image] = None,
+    prev_predicted_progress: Optional[float] = None,
 ):
     # 准备 demo in-context
     if demo_traj_folder is not None:
-        # 使用 delta 示例对
-        demo_examples = None
-        demo_delta_examples = build_demo_delta_examples(
-            demo_traj_folder, num_example_pairs=num_demo_pairs, seed=seed
+        demo_examples = build_demo_examples(
+            demo_traj_folder,
+            num_example_frames=num_demo_frames,
+            seed=seed,
         )
     else:
         demo_examples = None
-        demo_delta_examples = None
     # 准备目标轨迹的打乱帧
     target_frames = build_target_frames(
         target_traj_folder,
-        prev_frame_id=prev_frame_id,
-        curr_frame_id=curr_frame_id
+        frame_id=frame_id
     )
 
     messages = build_qwen_messages(
         task_description=task_description,
         demo_examples=demo_examples,
         target_frames=target_frames,
-        demo_delta_examples=demo_delta_examples,
+        prev_target_image=prev_target_image,
+        prev_predicted_progress=prev_predicted_progress,
     )
 
     # 用 Qwen 的 processor 构造输入
@@ -503,16 +436,18 @@ def run_gvl_qwen_for_trajectory(
 def main():
     # ===== 需要你修改的部分 =====
     task_description = "put the white mug on the plate"
-    # 支持视频文件或帧文件夹
-    demo_traj_folder = "data/1/right_shoulder"  # 可改为如 "data/1/right_shoulder.mp4"
-    target_traj_folder = "data/2/right_shoulder"  # 可改为如 "data/2/right_shoulder.mp4"
+    demo_traj_folder = "data/1/right_shoulder"
+    target_traj_folder = "data/2/right_shoulder"
+    frame_id = 32
+    expected_progress = 100.0 * frame_id / (len(list_image_paths(target_traj_folder)) - 1)
     # ===== 加载模型 =====
-    model_name = "Qwen/Qwen3-VL-2B-Instruct"
+    model_name = "models/Qwen-VL-2B-Instruct"
     print(f"Loading model: {model_name}")
     model = AutoModelForImageTextToText.from_pretrained(
         model_name,
         dtype="auto",
         device_map="auto",
+        local_files_only=True
     )
     processor = AutoProcessor.from_pretrained(model_name)
 
@@ -522,19 +457,20 @@ def main():
         model.eval()
     except Exception:
         pass
-    # 载入目标源的所有帧以便推理与显示
-    target_frames_all = load_frames_from_source(target_traj_folder)
-    frame_indices = list(range(1, len(target_frames_all), 5))
+    target_img_paths = list_image_paths(target_traj_folder)
+    frame_indices = list(range(1, len(target_img_paths), 5))
     predicted_list: List[Optional[float]] = []
     expected_list: List[Optional[float]] = []
     composite_frames: List[np.ndarray] = []
-    output_video_path = "outputs/delta_progress_video.mp4"
+    output_video_path = "outputs/progress_video.mp4"
     fps = 4
 
-    for step_idx in range(1, len(frame_indices)):
-        prev_id = frame_indices[step_idx - 1]
-        curr_id = frame_indices[step_idx]
-        expected_delta = 100.0 * (curr_id - prev_id) / (len(target_frames_all) - 1)
+    # 维护上一帧的额外上下文（第二次及之后使用）
+    prev_target_image = None
+    prev_predicted_progress = None
+
+    for frame_id in frame_indices:
+        expected_progress = 100.0 * frame_id / (len(target_img_paths) - 1)
         output_text = run_gvl_qwen_for_trajectory(
             model=model,
             processor=processor,
@@ -542,32 +478,37 @@ def main():
             target_traj_folder=target_traj_folder,
             demo_traj_folder=demo_traj_folder,
             seed=0,
-            prev_frame_id=prev_id,
-            curr_frame_id=curr_id,
+            frame_id=frame_id,
             num_demo_frames=12,
-            num_demo_pairs=6,
             max_new_tokens=2048,
+            prev_target_image=prev_target_image,
+            prev_predicted_progress=prev_predicted_progress,
         )
         print("=== Raw model output ===")
         print(output_text)
         print("========================")
         # 解析模型输出：期望格式
-        # "Delta Progress: <number>%", 允许负号
+        # "Frame 1: Frame Description: <short description>, Task Completion Percentages: <number>%"
         def _parse_completion_output(text: str):
             """
-            从模型输出中解析出delta百分比。返回 (percent_float, description)；
+            从模型输出中解析出描述与百分比。返回 (percent_float, description)；
             若无法解析，返回 (None, None)。
             """
             # 优先匹配明确格式
-            m = re.search(r"Delta\s*Progress\s*:\s*([+-]?[0-9]+(?:\.[0-9]+)?)\s*%", text, flags=re.IGNORECASE)
+            m = re.search(
+                r"Frame\s*\d+\s*:\s*Frame\s*Description\s*:\s*(.*?),\s*Task\s*Completion\s*Percentages\s*:\s*([0-9]+(?:\.[0-9]+)?)\s*%",
+                text,
+                flags=re.IGNORECASE | re.DOTALL,
+            )
             if m:
+                desc = m.group(1).strip()
                 try:
-                    pct = float(m.group(1))
-                    return pct, None
+                    pct = float(m.group(2))
+                    return pct, desc
                 except ValueError:
                     pass
-            # 退而求其次：抓取任意 0~100 的百分号数字（最后一个最可能为答案）
-            candidates = re.findall(r"([+-]?[0-9]+(?:\.[0-9]+)?)\s*%", text)
+            # 退而求其次：抓取任意 -100~100 的数字（可带或不带百分号，最后一个最可能为答案）
+            candidates = re.findall(r"(-?[0-9]+(?:\.[0-9]+)?)\s*%?", text)
             if candidates:
                 try:
                     pct = float(candidates[-1])
@@ -579,16 +520,28 @@ def main():
 
         parsed_pct, parsed_desc = _parse_completion_output(output_text)
         if parsed_pct is not None:
-            print(f"Parsed -> Delta Progress: {parsed_pct:.2f}%")
+            last_abs = prev_predicted_progress if prev_predicted_progress is not None else 0.0
+            abs_pred = max(0.0, min(100.0, last_abs + parsed_pct))
+            if parsed_desc:
+                print(f"Parsed -> Delta: {parsed_pct:.2f}, Abs: {abs_pred:.2f}%, Description: {parsed_desc}")
+            else:
+                print(f"Parsed -> Delta: {parsed_pct:.2f}, Abs: {abs_pred:.2f}%")
         else:
-            print("Parsed -> Delta Progress: <unparsed>")
-        print(f"Expected delta for pair ({prev_id}->{curr_id}): {expected_delta:.2f}%")
+            print("Parsed -> Progress: <unparsed>")
+        print(f"Expected progress for frame {frame_id}: {expected_progress:.2f}%")
         # 聚合并渲染
-        predicted_list.append(parsed_pct if parsed_pct is not None else np.nan)
-        expected_list.append(expected_delta)
-        cur_img = target_frames_all[curr_id]
+        if parsed_pct is not None:
+            predicted_list.append(abs_pred)
+        else:
+            predicted_list.append(np.nan)
+        expected_list.append(expected_progress)
+        cur_img = Image.open(target_img_paths[frame_id]).convert("RGB")
         comp = render_progress_frame(cur_img, predicted_list, expected_list)
         composite_frames.append(comp)
+
+        # 更新上一帧的额外上下文（仅在成功解析出进度时启用）
+        prev_target_image = cur_img
+        prev_predicted_progress = abs_pred if parsed_pct is not None else None
 
     # 写出视频
     save_video(composite_frames, output_video_path, fps=fps)
