@@ -11,7 +11,7 @@ from typing import List, Dict, Any, Optional
 
 from transformers import AutoModelForImageTextToText, AutoProcessor
 from peft import PeftModel
-from utils.data_formatting import data_sample_to_messages, parse_delta_progress
+from utils.data_formatting import data_sample_to_messages_and_answer, parse_delta_progress_int
 
 
 class DeltaProgressInference:
@@ -20,21 +20,13 @@ class DeltaProgressInference:
     def __init__(self, base_model_path: str, adapter_path: str, use_flash_attention: bool = True):
         """初始化模型和处理器"""
         print("正在加载基础模型...")
-        if use_flash_attention:
-            base_model = AutoModelForImageTextToText.from_pretrained(
-                base_model_path,
-                torch_dtype="auto",
-                attn_implementation="flash_attention_2",
-                device_map="auto",
-                trust_remote_code=True
-            )
-        else:
-            base_model = AutoModelForImageTextToText.from_pretrained(
-                base_model_path,
-                torch_dtype="auto",
-                device_map="auto",
-                trust_remote_code=True
-            )
+        base_model = AutoModelForImageTextToText.from_pretrained(
+            base_model_path,
+            torch_dtype="auto",
+            attn_implementation="flash_attention_2",
+            device_map="auto",
+            trust_remote_code=True
+        )
         
         print("正在加载LoRA适配器...")
         self.model = PeftModel.from_pretrained(base_model, adapter_path)
@@ -75,7 +67,7 @@ class DeltaProgressInference:
             clean_up_tokenization_spaces=False
         )[0]
         
-        return parse_delta_progress(output_text)
+        return parse_delta_progress_int(output_text)
     
 
 def main():
@@ -85,7 +77,6 @@ def main():
     parser.add_argument("--adapter", type=str, required=True, help="LoRA适配器路径")
     parser.add_argument("--data-sample", type=str, required=True, help="data sample文件路径")
     parser.add_argument("--data-root", type=str, default="", help="data sample里所有图片路径的根目录")
-    parser.add_argument("--no-flash-attn", action="store_true", help="不使用flash attention")
     
     args = parser.parse_args()
     
@@ -98,7 +89,7 @@ def main():
     with open(args.data_sample, "r", encoding="utf-8") as f:
         data_sample = json.load(f)
     
-    messages = data_sample_to_messages(data_sample, data_root=args.data_root)
+    messages = data_sample_to_messages_and_answer(data_sample, data_root=args.data_root)
     result = inference.infer_from_messages(messages)
     print(f"Delta Progress: {result}")
 

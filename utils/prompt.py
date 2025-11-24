@@ -8,7 +8,7 @@ def build_prompt_with_reference_multiview(
     reference_view_names: List[str],
     target_view_names: List[str],
     task_desc: str,
-) -> Dict[str, Any]:
+) -> Tuple[List[str], str]:
     """构造一条 Qwen 风格样本"""
     human_prompt: List[str] = []
     human_prompt.append(
@@ -61,8 +61,8 @@ def build_prompt_with_reference_multiview(
         "- Do NOT output any explanation, percent sign, or extra text.\n"
     )
 
-    human_str = "".join(human_prompt)
-    images = ref_img_paths + target_img_paths_t1 + target_img_paths_t2
+    human_str: str = "".join(human_prompt)
+    img_paths = ref_img_paths + target_img_paths_t1 + target_img_paths_t2
 
-    return images, human_str
+    return img_paths, human_str
 

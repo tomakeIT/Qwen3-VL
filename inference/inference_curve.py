@@ -16,7 +16,6 @@ from inference_pair import infer_pairwise_delta_progress
 
 def infer_progress_curve(
     inference: DeltaProgressInference,
-    root: str,
     target_demo_path: str,
     reference_demo_path: Optional[str],
     task_desc: str,
@@ -55,7 +54,6 @@ def infer_progress_curve(
         delta_t = step_interval
         delta_progress = infer_pairwise_delta_progress(
             inference=inference,
-            root=root,
             target_demo_path=target_demo_path,
             i=i,
             delta_t=delta_t,
@@ -100,7 +98,6 @@ def main():
     parser = argparse.ArgumentParser(description="Level 3: Progress曲线推理")
     parser.add_argument("--base-model", type=str, required=True, help="基础模型路径")
     parser.add_argument("--adapter", type=str, required=True, help="LoRA适配器路径")
-    parser.add_argument("--root", type=str, required=True, help="数据集根目录")
     parser.add_argument("--target-demo", type=str, required=True, help="target demo路径")
     parser.add_argument("--reference-demo", type=str, help="reference demo路径")
     parser.add_argument("--task-desc", type=str, required=True, help="任务描述")
@@ -115,19 +112,16 @@ def main():
                        help="target视角列表")
     parser.add_argument("--num-ref-frames", type=int, default=4, help="reference帧数量")
     parser.add_argument("--ref-jitter", type=int, default=2, help="reference索引jitter范围")
-    parser.add_argument("--no-flash-attn", action="store_true", help="不使用flash attention")
     
     args = parser.parse_args()
     
     inference = DeltaProgressInference(
         base_model_path=args.base_model,
         adapter_path=args.adapter,
-        use_flash_attention=not args.no_flash_attn
     )
     
     frame_indices, progress_values = infer_progress_curve(
         inference=inference,
-        root=args.root,
         target_demo_path=args.target_demo,
         reference_demo_path=args.reference_demo,
         task_desc=args.task_desc,

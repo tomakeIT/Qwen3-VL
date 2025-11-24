@@ -14,7 +14,7 @@ from utils.data_formatting import (
     compute_delta_progress_label_int,
 )
 from utils.utils import abs_to_rel_path, compute_mean_pixel_diff, list_image_files, list_subdirs, dict_to_namespace
-from utils.frame_sampling import sample_reference_frames_from_demo
+from utils.frame_sampling import sample_pair_indices, sample_reference_frames_from_demo
 
 # 配置 logging
 logging.basicConfig(
@@ -25,85 +25,6 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-
-def sample_pair_indices(
-    T: int,
-    max_delta_t: int,
-    min_delta_t: int = 1,
-    peak_distance: int = 3,
-    rise_factor: float = 1.3,
-    decay_factor: float = 0.8,
-) -> Optional[Tuple[int, int]]:
-    """
-    在给定长度为 T 的帧序列里，按山峰分布随机采样 (i, j)
-    
-    山峰分布：在 peak_distance 位置达到最大权重，左侧上升，右侧衰减
-    
-    Args:
-        T: 序列长度
-        max_delta_t: 最大时间差
-        min_delta_t: 最小时间差（硬限制）
-        peak_distance: 峰值位置（权重最大的距离）
-        rise_factor: 上升因子（峰值左侧，>1 表示上升速度）
-        decay_factor: 衰减因子（峰值右侧，0 < decay_factor < 1），越小衰减越快
-    
-    Returns:
-        (i, j) 或 None
-    """
-    if T < 2:
-        return None
-    
-    i = random.randint(0, T - 2)
-    
-    # 计算所有可能的 delta_t 及其权重（山峰分布）
-    candidates: List[Tuple[int, float]] = []
-    
-    # 计算权重函数
-    def calculate_weight(dt: int) -> float:
-        if dt < peak_distance:
-            # 上升阶段：从 min_delta_t 到 peak_distance
-            weight = rise_factor ** (dt - min_delta_t)
-        elif dt == peak_distance:
-            # 峰值位置：权重为 1.0
-            weight = 1.0
-        else:
-            # 衰减阶段：从 peak_distance 到 max_delta_t
-            weight = decay_factor ** (dt - peak_distance)
-        return weight
-    
-    # 正向采样
-    max_forward = min(max_delta_t, T - 1 - i)
-    for dt in range(min_delta_t, max_forward + 1):
-        weight = calculate_weight(dt)
-        candidates.append((dt, weight))
-    
-    # 反向采样
-    max_backward = min(max_delta_t, i)
-    for dt in range(min_delta_t, max_backward + 1):
-        weight = calculate_weight(dt)
-        candidates.append((-dt, weight))
-    
-    if not candidates:
-        return None
-    
-    # 按权重采样（加权随机选择）
-    deltas, weights = zip(*candidates)
-    total_weight = sum(weights)
-    if total_weight == 0:
-        return None
-    
-    r = random.uniform(0, total_weight)
-    cumsum = 0
-    for delta_t, weight in candidates:
-        cumsum += weight
-        if r <= cumsum:
-            j = i + delta_t
-            return i, j
-    
-    # 如果没选到（理论上不会发生），返回第一个
-    delta_t = candidates[0][0]
-    j = i + delta_t
-    return i, j
 
 
 def sample_num_ref_frames(mean_ref_frames: int, min_frames: int = 3, max_frames: int = 10, std: float = 2.0) -> int:
@@ -165,7 +86,7 @@ class DatasetBuilder:
         self.root = config.root
         self.required_views = config.sampling.required_views
     
-    def generate_samples_for_task_split(
+    def generate_samples_for_a_task(
         self,
         split_name: str,
         task_name: str,
@@ -203,7 +124,7 @@ class DatasetBuilder:
             # for each pair in demo
             for pair_idx in range(self.config.sampling.pairs_per_demo):
                 if self.config.reference.resample_every > 0 and (pair_idx % self.config.reference.resample_every == 0):
-                    num_ref_frames_this = sample_num_ref_frames(
+                    num_ref_frames = sample_num_ref_frames(
                         self.config.reference.frames,
                         self.config.reference.frames_min,
                         self.config.reference.frames_max,
@@ -214,7 +135,7 @@ class DatasetBuilder:
                         task_name=task_name,
                         valid_task_demos=valid_task_demos_for_ref,
                         cur_demo_name=demo_name,
-                        num_ref_frames=num_ref_frames_this,
+                        num_ref_frames=num_ref_frames,
                         ref_jitter=self.config.reference.jitter,
                         reference_views=self.config.reference.views,
                     )
@@ -262,7 +183,7 @@ class DatasetBuilder:
                 else:
                     used_task_desc = task_desc
 
-                images, human_str = build_prompt_with_reference_multiview(
+                img_paths, human_str = build_prompt_with_reference_multiview(
                     ref_img_paths=ref_img_paths,
                     ref_progress_ints=ref_prog_ints,
                     target_img_paths_t1=target_paths_t1,
@@ -273,7 +194,7 @@ class DatasetBuilder:
                 )
                 
                 assistant_answer = f"{delta_progress_int:+d}"
-                images_rel = [abs_to_rel_path(self.root, img) for img in images]
+                images_rel = [abs_to_rel_path(self.root, img) for img in img_paths]
                 data_sample = build_qwen_data_sample(images_rel, human_str, assistant_answer)
                 samples.append(data_sample)
 
@@ -331,7 +252,7 @@ def _process_single_task_worker(
     builder = DatasetBuilder(config)
     valid_task_demos_for_ref = {task_name: train_demo_names}
 
-    train_samples = builder.generate_samples_for_task_split(
+    train_samples = builder.generate_samples_for_a_task(
         split_name="train",
         task_name=task_name,
         demo_names=train_demo_names,
@@ -340,7 +261,7 @@ def _process_single_task_worker(
         valid_task_demos_for_ref=valid_task_demos_for_ref,
     )
 
-    eval_samples = builder.generate_samples_for_task_split(
+    eval_samples = builder.generate_samples_for_a_task(
         split_name="eval",
         task_name=task_name,
         demo_names=eval_demo_names,
@@ -422,7 +343,7 @@ def main(args):
         train_demos = train_tasks[task_name]
         eval_demos = eval_tasks.get(task_name, [])
 
-        train_samples = builder.generate_samples_for_task_split(
+        train_samples = builder.generate_samples_for_a_task(
             split_name="train",
             task_name=task_name,
             demo_names=train_demos,
@@ -432,7 +353,7 @@ def main(args):
         )
         train_samples_all.extend(train_samples)
 
-        eval_samples = builder.generate_samples_for_task_split(
+        eval_samples = builder.generate_samples_for_a_task(
             split_name="eval",
             task_name=task_name,
             demo_names=eval_demos,
