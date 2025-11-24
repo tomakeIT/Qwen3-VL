@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lightwheel-reward"
+version = "0.1.0"
+requires-python = ">=3.8"
+dependencies = [
+    "pillow>=9.0.0",
+    "pyyaml>=6.0",
+    "numpy>=1.20.0",
+]
+
+[project.optional-dependencies]
+inference = [
+    "torch>=2.0.0",
+    "transformers>=4.30.0",
+    "peft>=0.4.0",
+    "matplotlib>=3.5.0",
+]
+
+[tool.setuptools]
+packages = ["dataset", "inference"]
