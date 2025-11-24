@@ -1,0 +1,14 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"path": "../ReWiND"
+		},
+		{
+			"path": "../LightwheelData"
+		}
+	],
+	"settings": {}
+}
