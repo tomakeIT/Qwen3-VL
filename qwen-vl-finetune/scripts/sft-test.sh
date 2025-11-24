@@ -1,37 +1,51 @@
 #!/bin/bash
 
+#################### 进入单独会话的方法：
+# 方案 3：使用 screen（推荐用于长时间运行）
+# 安装screen：sudo apt-get install screen  
+# 创建新的 screen 会话screen -S training
+# 在 screen 中运行cd /home/lightwheel/erdao.liang/Qwen3-VL/qwen-vl-finetunebash; scripts/sft-test.sh
+# 按 Ctrl+A 然后按 D 来 detach（分离），进程继续运行# 重新连接：screen -r training
+# 在会话中输入exit结束screen会话
+########################33
+
 # Distributed training configuration
 MASTER_ADDR=${MASTER_ADDR:-"127.0.0.1"}
 MASTER_PORT=${MASTER_PORT:-$(shuf -i 20001-29999 -n 1)}
 NNODES=${WORLD_SIZE:-1}
-NPROC_PER_NODE=${NPROC_PER_NODE:-1}
-CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0}
+NPROC_PER_NODE=${NPROC_PER_NODE:-8}
+CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0,1,2,3,4,5,6,7}
 
 # DeepSpeed configuration
 deepspeed=./scripts/zero2.json
 
 # Model configuration
-llm=/home/erdao/Documents/Qwen3-VL/models/Qwen-VL-2B-Instruct # Using HuggingFace model ID
+model_path=/home/lightwheel/erdao.liang/Qwen3-VL/models/Qwen-VL-2B-Instruct # Using HuggingFace model ID
 
 # Training hyperparameters
-lr=2e-7
+lr=5e-4
 batch_size=8
 grad_accum_steps=1
+model_max_length=4096
+num_train_epochs=200
 
 # Training entry point
 entry_file=qwenvl/train/train_qwen.py
 
 # Dataset configuration (replace with public dataset names)
-datasets=example
+datasets=put_white_mug_on_plate
 
 # Output configuration
-run_name="qwen2vl-1gpu-test"
+run_name="1122-PutWhiteMugOnPlate"
 output_dir=./output
+
+# Wandb configuration
+export WANDB_PROJECT="qwen3vl-rewardmodel"
 
 # Training arguments
 args="
     --deepspeed ${deepspeed} \
-    --model_name_or_path "${llm}" \
+    --model_name_or_path "${model_path}" \
     --dataset_use ${datasets} \
     --data_flatten True \
     --tune_mm_vision False \
@@ -40,7 +54,7 @@ args="
     --bf16 \
     --lora_enable True \
     --output_dir ${output_dir} \
-    --num_train_epochs 2000 \
+    --num_train_epochs ${num_train_epochs} \
     --per_device_train_batch_size ${batch_size} \
     --per_device_eval_batch_size $((batch_size*2)) \
     --gradient_accumulation_steps ${grad_accum_steps} \
@@ -56,9 +70,9 @@ args="
     --max_grad_norm 1 \
     --lr_scheduler_type "cosine" \
     --logging_steps 1 \
-    --model_max_length 2048 \
+    --model_max_length ${model_max_length} \
     --gradient_checkpointing True \
-    --dataloader_num_workers 8 \
+    --dataloader_num_workers 16 \
     --run_name ${run_name} \
     --report_to wandb"
 

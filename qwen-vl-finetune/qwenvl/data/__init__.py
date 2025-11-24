@@ -33,14 +33,32 @@ EXAMPLE_DATA = {
     "annotation_path": "/home/erdao/Documents/Qwen3-VL/qwen-vl-finetune/Example_data/dataset/train/L10K3TurnOnTheStoveAndPutTheMokaPotOnIt.json",
     "data_path": "/home/erdao/Documents/Qwen3-VL/qwen-vl-finetune",
 }
+
+L10K3TurnOnTheStoveAndPutTheMokaPotOnIt = {
+        "annotation_path": "/home/lightwheel/erdao.liang/LightwheelData/dataset/train/L10K3TurnOnTheStoveAndPutTheMokaPotOnIt.json",
+        "data_path": "/home/lightwheel/erdao.liang/LightwheelData"
+    }
+L10K4PutTheBlackBowlInTheBottomDrawerOfTheCabinetAndCloseIt = {
+        "annotation_path": "/home/lightwheel/erdao.liang/LightwheelData/dataset/train/L10K4PutTheBlackBowlInTheBottomDrawerOfTheCabinetAndCloseIt.json",
+        "data_path": "/home/lightwheel/erdao.liang/LightwheelData"
+    }
+L10K6PutTheYellowAndWhiteMugInTheMicrowaveAndCloseIt = {
+        "annotation_path": "/home/lightwheel/erdao.liang/LightwheelData/dataset/train/L10K6PutTheYellowAndWhiteMugInTheMicrowaveAndCloseIt.json",
+        "data_path": "/home/lightwheel/erdao.liang/LightwheelData"
+    }
+
+L90L6PutTheWhiteMugOnThePlate = {
+        "annotation_path": "/home/lightwheel/erdao.liang/LightwheelData/dataset_1122/train/L90L6PutTheWhiteMugOnThePlate.json",
+        "data_path": "/home/lightwheel/erdao.liang/LightwheelData"
+    }
+
 data_dict = {
-    "cambrian_737k": CAMBRIAN_737K,
-    "cambrian_737k_pack": CAMBRIAN_737K_PACK,
-    "mp_doc": MP_DOC,
-    "clevr_mc": CLEVR_MC,
-    "videochatgpt": VIDEOCHATGPT,
-    "demo": DEMO_DATA,
-    "example": EXAMPLE_DATA,
+    # "demo": DEMO_DATA,
+    # "example": EXAMPLE_DATA,
+    # "data1": L10K3TurnOnTheStoveAndPutTheMokaPotOnIt,
+    # "data2": L10K4PutTheBlackBowlInTheBottomDrawerOfTheCabinetAndCloseIt,
+    # "data3": L10K6PutTheYellowAndWhiteMugInTheMicrowaveAndCloseIt,
+    "put_white_mug_on_plate": L90L6PutTheWhiteMugOnThePlate,
 }
 
 
