@@ -1,5 +1,8 @@
 models/
 outputs/
+qwen-vl-finetune/output
+qwen-vl-finetune/wandb
+miscs/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
