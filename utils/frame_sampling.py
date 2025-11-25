@@ -85,24 +85,31 @@ def sample_pair_indices(
     return i, j
 
 
+
+
 def sample_reference_frames_from_demo(
+    avg_frames: int,
+    min_frames: int,
+    max_frames: int,
+    std: float,
     reference_demo_path: str,
     reference_views: List[str],
-    num_ref_frames: int,
     ref_jitter: int,
 ) -> Tuple[List[str], List[int]]:
     """
     从给定的 reference demo 路径中采样 reference frames
-    
-    Args:
-        reference_demo_path: reference demo 的路径
-        reference_views: 需要采样的视角列表
-        num_ref_frames: 需要采样的帧数量
-        ref_jitter: 索引 jitter 范围
-    
     Returns:
         (ref_img_paths, ref_progress_ints): 采样的图片路径列表和对应的进度整数列表
     """
+
+    def sample_num_ref_frames(mean_ref_frames: int, min_frames: int = 3, max_frames: int = 10, std: float = 2.0) -> int:
+        """以 mean_ref_frames 为均值做一次高斯采样，得到本次实际使用的 reference time steps 数量"""
+        n = int(round(random.gauss(mean_ref_frames, std)))
+        n = max(min_frames, min(max_frames, n))
+        return n
+
+    num_ref_frames = sample_num_ref_frames(avg_frames,min_frames,max_frames,std)
+
     ref_img_paths: List[str] = []
     ref_progress_ints: List[int] = []
     

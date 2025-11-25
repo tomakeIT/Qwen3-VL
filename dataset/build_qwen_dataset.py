@@ -8,7 +8,7 @@ from types import SimpleNamespace
 from typing import List, Dict, Any, Tuple, Optional
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
-from utils.prompt import build_prompt_with_reference_multiview
+from utils.prompt import build_prompt
 from utils.data_formatting import (
     build_qwen_data_sample,
     compute_delta_progress_label_int,
@@ -26,58 +26,6 @@ logger = logging.getLogger(__name__)
 
 
 
-
-def sample_num_ref_frames(mean_ref_frames: int, min_frames: int = 3, max_frames: int = 10, std: float = 2.0) -> int:
-    """以 mean_ref_frames 为均值做一次高斯采样，得到本次实际使用的 reference time steps 数量"""
-    n = int(round(random.gauss(mean_ref_frames, std)))
-    n = max(min_frames, min(max_frames, n))
-    return n
-
-
-def sample_reference_multiview_frames(
-    root: str,
-    task_name: str,
-    valid_task_demos: Dict[str, List[str]],
-    cur_demo_name: str,
-    num_ref_frames: int,
-    ref_jitter: int,
-    reference_views: List[str],
-) -> Tuple[List[str], List[int]]:
-    """在同一个 task 中随机选一个 demo 作为 reference demo，然后从指定的视角中采样若干 time steps"""
-    task_path = os.path.join(root, task_name)
-    demos = valid_task_demos.get(task_name, [])
-    candidates = [d for d in demos if d != cur_demo_name]
-    if not candidates:
-        candidates = demos if demos else [cur_demo_name]
-
-    ref_demo_path = None
-    for demo_name in random.sample(candidates, len(candidates)):
-        demo_path = os.path.join(task_path, demo_name)
-        view_names = list_subdirs(demo_path)
-        if all(v in view_names for v in reference_views):
-            ref_demo_path = demo_path
-            break
-
-    if ref_demo_path is None:
-        fallback_path = os.path.join(task_path, cur_demo_name)
-        view_names = list_subdirs(fallback_path)
-        if all(v in view_names for v in reference_views):
-            ref_demo_path = fallback_path
-        else:
-            return [], []
-
-    return sample_reference_frames_from_demo(
-        reference_demo_path=ref_demo_path,
-        reference_views=reference_views,
-        num_ref_frames=num_ref_frames,
-        ref_jitter=ref_jitter,
-    )
-
-
-
-
-# ==================== 数据集构建 ====================
-
 class DatasetBuilder:
     """数据集构建核心类"""
     
@@ -85,6 +33,35 @@ class DatasetBuilder:
         self.config = config
         self.root = config.root
         self.required_views = config.sampling.required_views
+        self.sampling_cfg = config.sampling
+        self.reference_cfg = config.reference
+        self.filtering_cfg = config.filtering
+    
+    def sample_reference_multiview_frames(
+        self,
+        task_name: str,
+        valid_demos: List[str]
+    ) -> Tuple[List[str], List[int]]:
+        """在同一个 task 中随机选一个 demo 作为 reference demo，然后从指定的视角中采样若干 time steps"""
+        task_path = os.path.join(self.root, task_name)
+        
+        demo_name = random.choice(valid_demos)
+        demo_path = os.path.join(task_path, demo_name)
+        view_names = list_subdirs(demo_path)
+        if all(v in view_names for v in self.reference_cfg.views):
+            ref_demo_path = demo_path
+        else:
+            return [], []
+
+        return sample_reference_frames_from_demo(
+            avg_frames=self.reference_cfg.avg_frames,
+            min_frames=self.reference_cfg.frames_min,
+            max_frames=self.reference_cfg.frames_max,
+            std=self.reference_cfg.frames_std,
+            reference_demo_path=ref_demo_path,
+            reference_views=self.reference_cfg.views,
+            ref_jitter=self.reference_cfg.jitter,
+        )
     
     def generate_samples_for_a_task(
         self,
@@ -93,7 +70,7 @@ class DatasetBuilder:
         demo_names: List[str],
         task_desc_map: Dict[str, str],
         all_task_names: List[str],
-        valid_task_demos_for_ref: Dict[str, List[str]],
+        reference_demos: Optional[List[str]],
     ) -> List[Dict[str, Any]]:
         """为某个 task 在给定 demo 列表上生成一个 split (train/eval) 的样本"""
         samples: List[Dict[str, Any]] = []
@@ -113,7 +90,7 @@ class DatasetBuilder:
                 frames = list_image_files(v_path)
                 view_to_frames[v] = frames
 
-            T = min(len(frames) for frames in view_to_frames.values())
+            T = min(len(frames_list) for frames_list in view_to_frames.values())
             logger.info(f"  {task_name}/{demo_name} multi-view with T={T} (views: {self.required_views}).")
             if T < 2:
                 continue
@@ -122,73 +99,67 @@ class DatasetBuilder:
             ref_prog_ints: List[int] = []
 
             # for each pair in demo
-            for pair_idx in range(self.config.sampling.pairs_per_demo):
-                if self.config.reference.resample_every > 0 and (pair_idx % self.config.reference.resample_every == 0):
-                    num_ref_frames = sample_num_ref_frames(
-                        self.config.reference.frames,
-                        self.config.reference.frames_min,
-                        self.config.reference.frames_max,
-                        self.config.reference.frames_std,
-                    )
-                    ref_img_paths, ref_prog_ints = sample_reference_multiview_frames(
-                        root=self.root,
+            for pair_idx in range(self.sampling_cfg.pairs_per_demo):
+                
+                ###### sample reference frames
+                if self.reference_cfg.resample_every > 0 and (pair_idx % self.reference_cfg.resample_every == 0):
+                    ref_img_paths, ref_prog_ints = self.sample_reference_multiview_frames(
                         task_name=task_name,
-                        valid_task_demos=valid_task_demos_for_ref,
-                        cur_demo_name=demo_name,
-                        num_ref_frames=num_ref_frames,
-                        ref_jitter=self.config.reference.jitter,
-                        reference_views=self.config.reference.views,
+                        valid_demos=reference_demos,
                     )
 
+                ##### sample target i,j pairs
                 pair = sample_pair_indices(
                     T,
-                    self.config.sampling.max_delta_t,
-                    self.config.sampling.min_delta_t,
-                    self.config.sampling.peak_distance,
-                    self.config.sampling.rise_factor,
-                    self.config.sampling.decay_factor,
+                    self.sampling_cfg.max_delta_t,
+                    self.sampling_cfg.min_delta_t,
+                    self.sampling_cfg.peak_distance,
+                    self.sampling_cfg.rise_factor,
+                    self.sampling_cfg.decay_factor,
                 )
                 if pair is None:
                     continue
                 i, j = pair
 
-                # 直接使用采样到的 (i, j) 对，不再生成四元组
                 target_paths_t1: List[str] = []
                 target_paths_t2: List[str] = []
                 per_view_diffs: List[float] = []
 
                 for v in self.required_views:
-                    v_path = os.path.join(demo_path, v)
                     frames_v = view_to_frames[v]
                     frame_i_name = frames_v[i]
                     frame_j_name = frames_v[j]
+                    v_path = os.path.join(demo_path, v)
                     img_abs_1 = os.path.join(v_path, frame_i_name)
                     img_abs_2 = os.path.join(v_path, frame_j_name)
                     target_paths_t1.append(img_abs_1)
                     target_paths_t2.append(img_abs_2)
-
-                    if self.config.filtering.static_diff_threshold > 0:
+                    
+                    ##### filter static diff
+                    if self.filtering_cfg.static_diff_threshold > 0:
                         diff = compute_mean_pixel_diff(img_abs_1, img_abs_2)
                         per_view_diffs.append(diff)
 
+                ##### compute delta progress label
                 delta_progress_int = compute_delta_progress_label_int(i, j, T)
-                if self.config.filtering.static_diff_threshold > 0 and per_view_diffs:
-                    if all(d < self.config.filtering.static_diff_threshold for d in per_view_diffs):
+                if self.filtering_cfg.static_diff_threshold > 0 and per_view_diffs:
+                    if all(d < self.filtering_cfg.static_diff_threshold for d in per_view_diffs):
                         delta_progress_int = 0
 
-                if random.random() < self.config.filtering.mismatch_prob and len(all_task_names) > 1:
+                ##### random mismatch task description
+                if random.random() < self.filtering_cfg.mismatch_prob and len(all_task_names) > 1:
                     mismatch_candidates = [t for t in all_task_names if t != task_name]
                     used_task_desc = task_desc_map[random.choice(mismatch_candidates)]
                     delta_progress_int = 0
                 else:
                     used_task_desc = task_desc
 
-                img_paths, human_str = build_prompt_with_reference_multiview(
+                img_paths, human_str = build_prompt(
                     ref_img_paths=ref_img_paths,
                     ref_progress_ints=ref_prog_ints,
                     target_img_paths_t1=target_paths_t1,
                     target_img_paths_t2=target_paths_t2,
-                    reference_view_names=self.config.reference.views,
+                    reference_view_names=self.reference_cfg.views,
                     target_view_names=self.required_views,
                     task_desc=used_task_desc
                 )
@@ -250,24 +221,25 @@ def _process_single_task_worker(
     """多进程 worker：对单个 task 生成 train / eval 两个 split 的样本"""
     random.seed(config.seed + worker_idx)
     builder = DatasetBuilder(config)
-    valid_task_demos_for_ref = {task_name: train_demo_names}
 
+    # 训练集：从 train demos 中选择 reference
     train_samples = builder.generate_samples_for_a_task(
         split_name="train",
         task_name=task_name,
         demo_names=train_demo_names,
         task_desc_map=task_desc_map,
         all_task_names=all_task_names,
-        valid_task_demos_for_ref=valid_task_demos_for_ref,
+        reference_demos=train_demo_names,
     )
 
+    # 验证集：也从 train demos 中选择 reference
     eval_samples = builder.generate_samples_for_a_task(
         split_name="eval",
         task_name=task_name,
         demo_names=eval_demo_names,
         task_desc_map=task_desc_map,
         all_task_names=all_task_names,
-        valid_task_demos_for_ref=valid_task_demos_for_ref,
+        reference_demos=train_demo_names,
     )
 
     return task_name, train_samples, eval_samples
@@ -296,7 +268,7 @@ def main(args):
     logger.info(f"Processing {len(train_tasks)} tasks with >={config.split.min_demos_per_task} demos")
     logger.info("-" * 60)
 
-    # 多进程模式
+    #################### 多进程模式 ####################
     if config.per_task:
         os.makedirs(config.train_output_dir, exist_ok=True)
         if config.eval_output_dir:
@@ -334,7 +306,7 @@ def main(args):
                     logger.info(f"Saved eval JSON for task {task_name} to {eval_json_path}")
         return
 
-    # 单进程模式
+    #################### 单进程模式 ####################
     train_samples_all: List[Dict[str, Any]] = []
     eval_samples_all: List[Dict[str, Any]] = []
 
@@ -349,7 +321,7 @@ def main(args):
             demo_names=train_demos,
             task_desc_map=task_desc_map,
             all_task_names=all_task_names,
-            valid_task_demos_for_ref={task_name: train_demos},
+            reference_demos=train_demos,
         )
         train_samples_all.extend(train_samples)
 
@@ -359,7 +331,7 @@ def main(args):
             demo_names=eval_demos,
             task_desc_map=task_desc_map,
             all_task_names=all_task_names,
-            valid_task_demos_for_ref={task_name: train_demos},
+            reference_demos=train_demos,
         )
         eval_samples_all.extend(eval_samples)
 

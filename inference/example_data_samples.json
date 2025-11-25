@@ -1,0 +1,27 @@
+[
+{
+    "image": [
+      "1W_Libero_Piper/L90L6PutTheWhiteMugOnThePlate/L90L6PutTheWhiteMugOnThePlate_1757927758234053/first_person_camera/frame_000001.png",
+      "1W_Libero_Piper/L90L6PutTheWhiteMugOnThePlate/L90L6PutTheWhiteMugOnThePlate_1757927758234053/first_person_camera/frame_000010.png",
+      "1W_Libero_Piper/L90L6PutTheWhiteMugOnThePlate/L90L6PutTheWhiteMugOnThePlate_1757927758234053/first_person_camera/frame_000021.png",
+      "1W_Libero_Piper/L90L6PutTheWhiteMugOnThePlate/L90L6PutTheWhiteMugOnThePlate_1757927758234053/first_person_camera/frame_000034.png",
+      "1W_Libero_Piper/L90L6PutTheWhiteMugOnThePlate/L90L6PutTheWhiteMugOnThePlate_1757927758234053/first_person_camera/frame_000040.png",
+      "1W_Libero_Piper/L90L6PutTheWhiteMugOnThePlate/L90L6PutTheWhiteMugOnThePlate_1757927758234053/first_person_camera/frame_000052.png",
+      "1W_Libero_Piper/L90L6PutTheWhiteMugOnThePlate/L90L6PutTheWhiteMugOnThePlate_1757994866950241/first_person_camera/frame_000003.png",
+      "1W_Libero_Piper/L90L6PutTheWhiteMugOnThePlate/L90L6PutTheWhiteMugOnThePlate_1757994866950241/left_hand_camera/frame_000003.png",
+      "1W_Libero_Piper/L90L6PutTheWhiteMugOnThePlate/L90L6PutTheWhiteMugOnThePlate_1757994866950241/right_hand_camera/frame_000003.png",
+      "1W_Libero_Piper/L90L6PutTheWhiteMugOnThePlate/L90L6PutTheWhiteMugOnThePlate_1757994866950241/first_person_camera/frame_000020.png",
+      "1W_Libero_Piper/L90L6PutTheWhiteMugOnThePlate/L90L6PutTheWhiteMugOnThePlate_1757994866950241/left_hand_camera/frame_000020.png",
+      "1W_Libero_Piper/L90L6PutTheWhiteMugOnThePlate/L90L6PutTheWhiteMugOnThePlate_1757994866950241/right_hand_camera/frame_000020.png"
+    ],
+    "conversations": [
+      {
+        "from": "human",
+        "value": "You are a robotic task progress evaluator.\n\nTask description: Put the white mug on the plate\n\nYou will first see several time steps from a reference demonstration of this task.\nEach time step contains multiple synchronized camera views and is annotated with its\nabsolute task completion percentage (an integer between 0 and 100).\nThen you will see two time steps (Image-1 and Image-2) from another episode of the SAME task,\nalso with multiple camera views.\n\nHere are example time steps from a reference demonstration with their absolute completion percentages.\nFor each time step, the views are given in the following fixed order:\n  - first_person_camera\n\nReference Time Step 1:\n- View first_person_camera: <image>\nThe task completion percentage for this time step is 0%.\n\nReference Time Step 2:\n- View first_person_camera: <image>\nThe task completion percentage for this time step is 18%.\n\nReference Time Step 3:\n- View first_person_camera: <image>\nThe task completion percentage for this time step is 39%.\n\nReference Time Step 4:\n- View first_person_camera: <image>\nThe task completion percentage for this time step is 65%.\n\nReference Time Step 5:\n- View first_person_camera: <image>\nThe task completion percentage for this time step is 76%.\n\nReference Time Step 6:\n- View first_person_camera: <image>\nThe task completion percentage for this time step is 100%.\n\nNow consider another episode of the SAME task.\nWe will show you two time steps from this episode, each with the following camera views\nin the exact order they are provided:\n  - first_person_camera, left_hand_camera, right_hand_camera\n\nImage-1 (earlier or reference time step):\n- View first_person_camera: <image>\n- View left_hand_camera: <image>\n- View right_hand_camera: <image>\n\nImage-2 (another time step of the same episode):\n- View first_person_camera: <image>\n- View left_hand_camera: <image>\n- View right_hand_camera: <image>\n\nLet the task completion percentages of Image-1 and Image-2 be P1 and P2 (both between 0 and 100).\nYour job is to output the integer delta progress D = round(P2 - P1),\nwhich must be an integer between -100 and 100 (inclusive).\n\nOUTPUT REQUIREMENT:\n- Return ONLY the integer D (with optional leading '+' or '-' sign),\n  e.g., +5, -13, 0, +42, -100, +100.\n- Do NOT output any explanation, percent sign, or extra text.\n"
+      },
+      {
+        "from": "gpt",
+        "value": "+35"
+      }
+    ]
+  }]

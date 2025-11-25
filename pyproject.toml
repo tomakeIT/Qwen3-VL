@@ -12,13 +12,5 @@ dependencies = [
     "numpy>=1.20.0",
 ]
 
-[project.optional-dependencies]
-inference = [
-    "torch>=2.0.0",
-    "transformers>=4.30.0",
-    "peft>=0.4.0",
-    "matplotlib>=3.5.0",
-]
-
 [tool.setuptools]
-packages = ["dataset", "inference"]
+packages = ["dataset", "inference", "utils"]

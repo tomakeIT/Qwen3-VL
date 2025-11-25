@@ -23,7 +23,7 @@ sampling:
 reference:
   views:                      # reference 使用的视角（可以与 target 不同）
     - "first_person_camera"
-  frames: 4                   # reference time steps 的均值
+  avg_frames: 4                   # reference time steps 的均值
   jitter: 2                   # reference 索引的 jitter 范围（帧数）
   resample_every: 5           # 每 N 个 base pair 重新采样一次 reference
   frames_min: 3               # reference frames 的最小数量

@@ -1,6 +1,6 @@
 from typing import List, Dict, Any, Tuple, Optional
 
-def build_prompt_with_reference_multiview(
+def build_prompt(
     ref_img_paths: List[str],
     ref_progress_ints: List[int],
     target_img_paths_t1: List[str],

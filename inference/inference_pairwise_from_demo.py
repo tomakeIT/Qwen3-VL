@@ -6,25 +6,21 @@ import os
 import argparse
 import yaml
 from typing import List, Dict, Any, Optional
-from types import SimpleNamespace
-
 from inferencer import DeltaProgressInference
-from utils.data_formatting import build_qwen_messages
+from utils.data_formatting import build_qwen_messages, compute_delta_progress_label_int
 from utils.utils import list_image_files, dict_to_namespace
 from utils.frame_sampling import sample_reference_frames_from_demo
-from utils.prompt import build_prompt_with_reference_multiview
+from utils.prompt import build_prompt
 
 
-def build_messages_from_demos(
+def build_messages_from_demo(
     target_demo_path: str,
     i: int,
     j: int,
     reference_demo_path: Optional[str],
     task_desc: str,
-    reference_views: List[str],
     target_views: List[str],
-    num_ref_frames: int = 4,
-    ref_jitter: int = 2,
+    reference_config
 ) -> List[Dict[str, Any]]:
     """根据demo路径和参数直接构造messages格式"""
     view_to_frames: Dict[str, List[str]] = {}
@@ -53,23 +49,23 @@ def build_messages_from_demos(
         target_paths_t1.append(img_abs_1)
         target_paths_t2.append(img_abs_2)
     
-    if reference_demo_path:
-        ref_img_paths, ref_progress_ints = sample_reference_frames_from_demo(
-            reference_demo_path=reference_demo_path,
-            reference_views=reference_views,
-            num_ref_frames=num_ref_frames,
-            ref_jitter=ref_jitter,
-        )
-    else:
-        ref_img_paths = []
-        ref_progress_ints = []
+
+    ref_img_paths, ref_progress_ints = sample_reference_frames_from_demo(
+        avg_frames=reference_config.avg_frames,
+        min_frames=reference_config.frames_min,
+        max_frames=reference_config.frames_max,
+        std=reference_config.frames_std,
+        reference_demo_path=reference_demo_path,
+        reference_views=reference_config.views,
+        ref_jitter=reference_config.jitter,
+    )
     
-    img_paths, human_str = build_prompt_with_reference_multiview(
+    img_paths, human_str = build_prompt(
         ref_img_paths=ref_img_paths,
         ref_progress_ints=ref_progress_ints,
         target_img_paths_t1=target_paths_t1,
         target_img_paths_t2=target_paths_t2,
-        reference_view_names=reference_views,
+        reference_view_names=reference_config.views,
         target_view_names=target_views,
         task_desc=task_desc,
     )
@@ -78,36 +74,9 @@ def build_messages_from_demos(
     return messages
 
 
-def infer_pairwise_delta_progress(
-    inference: DeltaProgressInference,
-    target_demo_path: str,
-    i: int,
-    j: int,
-    reference_demo_path: Optional[str],
-    task_desc: str,
-    reference_views: List[str],
-    target_views: List[str],
-    num_ref_frames: int = 4,
-    ref_jitter: int = 2,
-) -> Optional[int]:
-    """给定target_demo路径、i、j、reference_demo路径，采样构造并推理"""
-    messages = build_messages_from_demos(
-        target_demo_path=target_demo_path,
-        i=i,
-        j=j,
-        reference_demo_path=reference_demo_path,
-        task_desc=task_desc,
-        reference_views=reference_views,
-        target_views=target_views,
-        num_ref_frames=num_ref_frames,
-        ref_jitter=ref_jitter,
-    )
-    return inference.infer_from_messages(messages)
-
-
 def main():
-    parser = argparse.ArgumentParser(description="Pair-wise推理")
-    parser.add_argument("--base-model", type=str, required=True, help="基础模型路径")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--base-model", type=str, default="models/Qwen-VL-2B-Instruct", help="基础模型路径")
     parser.add_argument("--adapter", type=str, required=True, help="LoRA适配器路径")
     parser.add_argument("--target-demo", type=str, required=True, help="target demo路径")
     parser.add_argument("--i", type=int, required=True, help="起始帧索引")
@@ -124,30 +93,26 @@ def main():
     
     config = dict_to_namespace(config_dict)
     
-    # 从配置中读取参数
-    reference_views = config.reference.views
     target_views = config.sampling.required_views
-    num_ref_frames = config.reference.frames
-    ref_jitter = config.reference.jitter
-    
     inference = DeltaProgressInference(
         base_model_path=args.base_model,
         adapter_path=args.adapter,
     )
-    
-    result = infer_pairwise_delta_progress(
-        inference=inference,
+    messages = build_messages_from_demo(
         target_demo_path=args.target_demo,
         i=args.i,
         j=args.j,
         reference_demo_path=args.reference_demo,
         task_desc=args.task_desc,
-        reference_views=reference_views,
         target_views=target_views,
-        num_ref_frames=num_ref_frames,
-        ref_jitter=ref_jitter,
+        reference_config=config.reference,
     )
-    print(f"Delta Progress: {result}")
+    predicted_delta_progress = inference.infer_from_messages(messages)
+
+    T = min(len(list_image_files(os.path.join(args.target_demo, v))) for v in target_views)
+    gt_delta_progress = compute_delta_progress_label_int(args.i, args.j, T)
+    print(f"Predicted Delta Progress: {predicted_delta_progress}")
+    print(f"Ground Truth Delta Progress: {gt_delta_progress} (only if it is a successful demo)")
 
 
 if __name__ == "__main__":
