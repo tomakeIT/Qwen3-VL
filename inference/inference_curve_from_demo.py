@@ -94,7 +94,6 @@ def infer_progress_curve(
         
         if delta_progress is not None:
             current_progress += delta_progress
-            current_progress = max(0, min(100, current_progress))
             frame_indices.append(j)
             progress_values.append(current_progress)
     
@@ -106,10 +105,9 @@ def save_curve_plot(frame_indices: np.ndarray, progress_values: np.ndarray, outp
     plt.figure(figsize=(12, 6))
     plt.plot(frame_indices, progress_values, 'b-', linewidth=2, marker='o', markersize=4)
     plt.xlabel('Frame Index', fontsize=12)
-    plt.ylabel('Progress (%)', fontsize=12)
+    plt.ylabel('Progress (integer)', fontsize=12)
     plt.title(f'Task Progress Curve{f" - {task_name}" if task_name else ""}', fontsize=14)
     plt.grid(True, alpha=0.3)
-    plt.ylim(0, 100)
     plt.tight_layout()
     plt.savefig(output_path, dpi=150, bbox_inches='tight')
     plt.close()
@@ -135,9 +133,8 @@ def visualize_video_with_curve(video_frames: List[np.ndarray], frame_indices: np
     im1 = ax1.imshow(video_frames[0])
     
     ax2.set_xlim(frame_indices[0], frame_indices[-1])
-    ax2.set_ylim(0, 100)
     ax2.set_xlabel('Frame Index', fontsize=12)
-    ax2.set_ylabel('Progress (%)', fontsize=12)
+    ax2.set_ylabel('Progress (integer)', fontsize=12)
     ax2.set_title('Progress Curve', fontsize=12)
     ax2.grid(True, alpha=0.3)
     
@@ -176,7 +173,7 @@ def save_curve_data(frame_indices: np.ndarray, progress_values: np.ndarray, outp
         f.write(f"Task: {task_name}\n")
         f.write(f"Total frames: {len(frame_indices)}\n")
         f.write(f"Progress range: [{progress_values.min():.2f}, {progress_values.max():.2f}]\n\n")
-        f.write("Frame Index\tProgress (%)\n")
+        f.write("Frame Index\tProgress (integer)\n")
         for idx, prog in zip(frame_indices, progress_values):
             f.write(f"{int(idx)}\t{prog:.2f}\n")
 

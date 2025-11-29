@@ -34,23 +34,27 @@ EXAMPLE_DATA = {
     "data_path": "/home/erdao/Documents/Qwen3-VL/qwen-vl-finetune",
 }
 
-L10K3TurnOnTheStoveAndPutTheMokaPotOnIt = {
-        "annotation_path": "/home/lightwheel/erdao.liang/LightwheelData/dataset/train/L10K3TurnOnTheStoveAndPutTheMokaPotOnIt.json",
-        "data_path": "/home/lightwheel/erdao.liang/LightwheelData"
-    }
-L10K4PutTheBlackBowlInTheBottomDrawerOfTheCabinetAndCloseIt = {
-        "annotation_path": "/home/lightwheel/erdao.liang/LightwheelData/dataset/train/L10K4PutTheBlackBowlInTheBottomDrawerOfTheCabinetAndCloseIt.json",
-        "data_path": "/home/lightwheel/erdao.liang/LightwheelData"
-    }
-L10K6PutTheYellowAndWhiteMugInTheMicrowaveAndCloseIt = {
-        "annotation_path": "/home/lightwheel/erdao.liang/LightwheelData/dataset/train/L10K6PutTheYellowAndWhiteMugInTheMicrowaveAndCloseIt.json",
-        "data_path": "/home/lightwheel/erdao.liang/LightwheelData"
-    }
-
+# 4 tasks with negative samples
 L90L6PutTheWhiteMugOnThePlate = {
         "annotation_path": "/home/lightwheel/erdao.liang/LightwheelData/dataset_1122/train/L90L6PutTheWhiteMugOnThePlate.json",
         "data_path": "/home/lightwheel/erdao.liang/LightwheelData"
     }
+
+L10K8PutBothMokaPotsOnTheStove = {
+    "annotation_path": "/home/lightwheel/erdao.liang/LightwheelData/dataset_1122/train/L10K8PutBothMokaPotsOnTheStove.json",
+    "data_path": "/home/lightwheel/erdao.liang/LightwheelData"
+}
+
+L90K2StackTheMiddleBlackBowlOnTheBackBlackBowl = {
+    "annotation_path": "/home/lightwheel/erdao.liang/LightwheelData/dataset_1122/train/L90K2StackTheMiddleBlackBowlOnTheBackBlackBowl.json",
+    "data_path": "/home/lightwheel/erdao.liang/LightwheelData"
+}
+
+L90L3PickUpTheCreamCheeseAndPutItInTheTray = {
+    "annotation_path": "/home/lightwheel/erdao.liang/LightwheelData/dataset_1122/train/L90L3PickUpTheCreamCheeseAndPutItInTheTray.json",
+    "data_path": "/home/lightwheel/erdao.liang/LightwheelData"
+}
+
 
 data_dict = {
     # "demo": DEMO_DATA,
@@ -59,6 +63,9 @@ data_dict = {
     # "data2": L10K4PutTheBlackBowlInTheBottomDrawerOfTheCabinetAndCloseIt,
     # "data3": L10K6PutTheYellowAndWhiteMugInTheMicrowaveAndCloseIt,
     "put_white_mug_on_plate": L90L6PutTheWhiteMugOnThePlate,
+    "put_both_moka_pots_on_stove": L10K8PutBothMokaPotsOnTheStove,
+    "stack_middle_black_bowl_on_back_black_bowl": L90K2StackTheMiddleBlackBowlOnTheBackBlackBowl,
+    "pick_up_cream_cheese_and_put_in_tray": L90L3PickUpTheCreamCheeseAndPutItInTheTray,
 }
 
 

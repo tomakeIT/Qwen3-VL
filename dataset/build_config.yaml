@@ -1,8 +1,8 @@
 
 # 数据路径配置
 root: "/home/lightwheel/erdao.liang/LightwheelData/1W_Libero_Piper"  # 数据集根目录
-train_output_dir: "./dataset_1122/train"         # 训练集输出目录（per_task 模式使用）
-eval_output_dir: "./dataset_1122/eval"      # 验证集输出目录（per_task 模式使用）
+train_output_dir: "/home/lightwheel/erdao.liang/LightwheelData/dataset_1122/train"         # 训练集输出目录（per_task 模式使用）
+eval_output_dir: "/home/lightwheel/erdao.liang/LightwheelData/dataset_1122/eval"      # 验证集输出目录（per_task 模式使用）
 train_output: "train.json"                 # 单进程模式的训练集输出文件
 eval_output: "eval.json"             # 单进程模式的验证集输出文件
 
@@ -33,14 +33,17 @@ reference:
 # 过滤参数
 filtering:
   static_diff_threshold: 0.01  # 如果所有视角的像素差都小于此阈值，将 delta_progress 设为 0
-  mismatch_prob: 0.02          # 随机替换任务描述的概率（用于负样本，delta 设为 0）
+  mismatch_prob: 0.00          # 随机替换任务描述的概率（用于负样本，delta 设为 0）
 
 # 数据划分配置
 split:
   train_ratio: 0.85            # 训练集比例
   min_demos_per_task: 2        # 每个任务最少需要的 demo 数量
   selected_tasks:            # 选择要处理的任务：null 表示处理所有任务，或指定任务名称列表，例如: ["task1", "task2"]
-    - "L90L6PutTheWhiteMugOnThePlate"
+    - "L10K8PutBothMokaPotsOnTheStove"
+    - "L90K2StackTheMiddleBlackBowlOnTheBackBlackBowl"
+    - "L90L3PickUpTheCreamCheeseAndPutItInTheTray"
+
 
 # 其他配置
 seed: 42                       # 随机种子

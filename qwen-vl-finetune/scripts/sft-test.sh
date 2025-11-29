@@ -33,11 +33,16 @@ num_train_epochs=200
 entry_file=qwenvl/train/train_qwen.py
 
 # Dataset configuration (replace with public dataset names)
-datasets=put_white_mug_on_plate
+datasets=put_white_mug_on_plate,put_both_moka_pots_on_stove,stack_middle_black_bowl_on_back_black_bowl,pick_up_cream_cheese_and_put_in_tray
 
-# Output configuration
-run_name="1122-PutWhiteMugOnPlate"
+# wandb run
+run_name="1127-4NegativeTasks"
+
+
+# checkpoint saving
 output_dir=./output
+save_total_limit=10
+save_steps=2000
 
 # Wandb configuration
 export WANDB_PROJECT="qwen3vl-rewardmodel"
@@ -62,8 +67,8 @@ args="
     --min_pixels 784 \
     --eval_strategy "no" \
     --save_strategy "steps" \
-    --save_steps 1000 \
-    --save_total_limit 1 \
+    --save_steps ${save_steps} \
+    --save_total_limit ${save_total_limit} \
     --learning_rate ${lr} \
     --weight_decay 0 \
     --warmup_ratio 0.03 \

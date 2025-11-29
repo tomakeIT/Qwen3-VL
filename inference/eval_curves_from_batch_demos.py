@@ -122,7 +122,7 @@ def evaluate_curves(
         end_frame: 结束帧
         
     Returns:
-        包含平均指标的字典和所有curve数据列表
+        包含平均指标的字典和所有curve数据列表（每个元素为(frame_indices, progress_values, T)）
     """
     pearsons, spearmans = [], []
     norm_total_vars = []
@@ -148,6 +148,9 @@ def evaluate_curves(
             continue
         
         try:
+            # 计算T值（总帧数）
+            T = min(len(list_image_files(os.path.join(target_demo_path, v))) for v in target_views)
+            
             # 推理progress curve
             frame_indices, progress_values = infer_progress_curve(
                 inference=inference,
@@ -181,7 +184,7 @@ def evaluate_curves(
             spearmans.append(spearman)
             norm_total_vars.append(norm_tv)
             monotonicity_rates.append(monotonicity_rate)
-            all_curves.append((frame_indices, progress_values))
+            all_curves.append((frame_indices, progress_values, T))
             
         except Exception as e:
             print(f"警告：处理demo {target_demo_path} 时出错: {e}")
@@ -239,12 +242,13 @@ def main(args):
     # 绘制所有curve
     if all_curves:
         plt.figure(figsize=(12, 8))
-        for frame_indices, progress_values in all_curves:
+        for frame_indices, progress_values, T in all_curves:
             normalized_frames = (frame_indices - frame_indices[0]) / (frame_indices[-1] - frame_indices[0]) if len(frame_indices) > 1 and frame_indices[-1] != frame_indices[0] else np.linspace(0, 1, len(frame_indices))
-            plt.plot(normalized_frames, progress_values, alpha=0.6, linewidth=1)
+            plt.plot(normalized_frames, progress_values, alpha=0.6, linewidth=1, label=f"T={T}")
         plt.xlabel("Normalized Frame Index")
         plt.ylabel("Progress (%)")
         plt.title(f"All Progress Curves (n={len(all_curves)})")
+        plt.legend(loc='best', fontsize=8, ncol=2)
         plt.grid(True, alpha=0.3)
         plot_path = args.plot_output if args.plot_output else "all_curves.png"
         plt.savefig(plot_path, dpi=150, bbox_inches="tight")
@@ -280,7 +284,7 @@ if __name__ == "__main__":
     parser.add_argument("--start-frame", type=int, default=0, help="起始帧")
     parser.add_argument("--end-frame", type=int, default=None, help="结束帧")
     parser.add_argument("--output", type=str, default=None, help="可选：保存结果到JSON文件")
-    parser.add_argument("--plot-output", type=str, default=None, help="可选：保存curve图路径")
+    parser.add_argument("--plot-output", type=str, default="./curves.png", help="可选：保存curve图路径")
     args = parser.parse_args()
     
     main(args)
