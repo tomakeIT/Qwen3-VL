@@ -24,7 +24,7 @@ model_path=/home/lightwheel/erdao.liang/Qwen3-VL/models/Qwen-VL-2B-Instruct # Us
 
 # Training hyperparameters
 lr=5e-4
-batch_size=8
+batch_size=12
 grad_accum_steps=1
 model_max_length=4096
 num_train_epochs=200
@@ -33,10 +33,10 @@ num_train_epochs=200
 entry_file=qwenvl/train/train_qwen.py
 
 # Dataset configuration (replace with public dataset names)
-datasets=put_white_mug_on_plate,put_both_moka_pots_on_stove,stack_middle_black_bowl_on_back_black_bowl,pick_up_cream_cheese_and_put_in_tray
+datasets=pick_up_cream_cheese_and_put_in_tray,put_white_mug_on_plate,put_both_moka_pots_on_stove,stack_middle_black_bowl_on_back_black_bowl
 
 # wandb run
-run_name="1127-4NegativeTasks"
+run_name="1129-4Tasks"
 
 
 # checkpoint saving
@@ -86,3 +86,6 @@ torchrun --nproc_per_node=${NPROC_PER_NODE} \
          --master_addr=${MASTER_ADDR} \
          --master_port=${MASTER_PORT} \
          ${entry_file} ${args}
+
+
+            #  zero2.json: "gradient_clipping": 1.0, 
