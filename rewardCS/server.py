@@ -27,6 +27,7 @@ service_state = {
     "current_task_context": None
 }
 
+
 class InitTaskRequest(BaseModel):
     reference_demo_path: Optional[str]
     task_desc: str
@@ -41,17 +42,24 @@ class InitTaskRequest(BaseModel):
     # Target view names (can be set here or per query, but usually fixed for task)
     target_views: List[str]
 
-class PredictRequest(BaseModel):
-    """
-    推理请求（仅支持图像字典模式）：
-    - t1_images / t2_images（视角名 -> base64 编码图像字典）
-    """
 
-    # 视角名 -> base64 图像
+class QueryImages(BaseModel):
+    """Images for a single query: one pair of time steps (t1, t2)."""
+
     t1_images: Dict[str, str]
     t2_images: Dict[str, str]
 
-    # 可选地覆盖 target_views；通常可以省略，由 key 自动推导
+
+class PredictRequest(BaseModel):
+    """
+    Inference request (supports batch):
+    - queries: List[QueryImages], each element is a (t1, t2) image dict pair
+      All queries share the same task context, only time steps differ.
+    """
+
+    queries: List[QueryImages]
+
+    # Optional override of target view names. If omitted, will be inferred from dict keys.
     target_views: Optional[List[str]] = None
 
 @app.post("/init_task")
@@ -102,41 +110,21 @@ def predict(req: PredictRequest):
     context = service_state["current_task_context"]
     if context is None:
         raise HTTPException(status_code=400, detail="No task initialized. Call /init_task first.")
-    
+
     inference = service_state["inference_model"]
 
-    # 统一构造 target_views / t1_paths / t2_paths 三个量，后续下游逻辑保持不变
+    # Build target_views / t1_paths / t2_paths for each query; downstream logic remains the same
     tmp_files: List[str] = []
+    msgs_list: List[List[Dict[str, Any]]] = []
 
     try:
-        # -------- 图像字典模式：视角名 -> base64 图像 --------
-        t1_images = req.t1_images or {}
-        t2_images = req.t2_images or {}
-
-        if set(t1_images.keys()) != set(t2_images.keys()):
-            raise HTTPException(
-                status_code=400,
-                detail="t1_images 和 t2_images 的视角 key 集合必须完全一致",
-            )
-
-        # 视角名顺序优先使用 req.target_views，否则使用 dict 的插入顺序
-        if req.target_views is not None:
-            if set(req.target_views) != set(t1_images.keys()):
-                raise HTTPException(
-                    status_code=400,
-                    detail="req.target_views 与 t*_images 的 key 集合不一致",
-                )
-            target_views = req.target_views
-        else:
-            target_views = list(t1_images.keys())
-
         def _save_base64_image_to_temp(b64_str: str) -> str:
             try:
                 data = base64.b64decode(b64_str)
             except Exception:
                 raise HTTPException(
                     status_code=400,
-                    detail="图像 base64 解码失败，请检查编码是否正确",
+                    detail="Failed to decode image base64; please check the encoding.",
                 )
             fd, path = tempfile.mkstemp(suffix=".png")
             with os.fdopen(fd, "wb") as f:
@@ -144,47 +132,88 @@ def predict(req: PredictRequest):
             tmp_files.append(path)
             return path
 
-        t1_paths: List[str] = []
-        t2_paths: List[str] = []
-        for view_name in target_views:
-            if view_name not in t1_images or view_name not in t2_images:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"视角 '{view_name}' 在 t1_images 或 t2_images 中缺失",
-                )
-            t1_paths.append(_save_base64_image_to_temp(t1_images[view_name]))
-            t2_paths.append(_save_base64_image_to_temp(t2_images[view_name]))
+        # -------- Image dict batch: view_name -> base64 image --------
+        if not req.queries:
+            raise HTTPException(status_code=400, detail="`queries` must not be empty.")
 
-        # Validation
-        if len(t1_paths) != len(target_views) or len(t2_paths) != len(target_views):
+        # Use the first query to infer / validate target_views
+        first_t1 = req.queries[0].t1_images or {}
+        first_t2 = req.queries[0].t2_images or {}
+        if set(first_t1.keys()) != set(first_t2.keys()):
             raise HTTPException(
                 status_code=400,
-                detail="Number of images does not match number of target views",
+                detail="For the first query, t1_images and t2_images must have the same set of view keys.",
             )
 
-        # Build prompt using shared context + specific query images
-        img_paths, human_str = build_prompt(
-            ref_img_paths=context["ref_img_paths"],
-            ref_progress_ints=context["ref_progress_ints"],
-            target_img_paths_t1=t1_paths,
-            target_img_paths_t2=t2_paths,
-            reference_view_names=context["reference_view_names"],
-            target_view_names=target_views,
-            task_desc=context["task_desc"],
-        )
+        if req.target_views is not None:
+            if set(req.target_views) != set(first_t1.keys()):
+                raise HTTPException(
+                    status_code=400,
+                    detail="`target_views` must match the key set of images.",
+                )
+            target_views = req.target_views
+        else:
+            target_views = list(first_t1.keys())
 
-        # Build messages
-        # Note: build_qwen_messages expects absolute paths, build_prompt returns them if input was absolute.
-        # We assume client sends absolute paths or paths valid relative to server CWD.
-        # Ideally client sends absolute paths.
-        msgs = build_qwen_messages(human_str, img_paths)
+        # Build prompt and messages for each query
+        for q in req.queries:
+            t1_images = q.t1_images or {}
+            t2_images = q.t2_images or {}
+
+            if set(t1_images.keys()) != set(t2_images.keys()):
+                raise HTTPException(
+                    status_code=400,
+                    detail="For some query, t1_images and t2_images have different sets of view keys.",
+                )
+
+            if set(t1_images.keys()) != set(target_views):
+                raise HTTPException(
+                    status_code=400,
+                    detail="For some query, the set of view keys is inconsistent with `target_views`.",
+                )
+
+            t1_paths: List[str] = []
+            t2_paths: List[str] = []
+            for view_name in target_views:
+                if view_name not in t1_images or view_name not in t2_images:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"View '{view_name}' is missing in t1_images or t2_images.",
+                    )
+                t1_paths.append(_save_base64_image_to_temp(t1_images[view_name]))
+                t2_paths.append(_save_base64_image_to_temp(t2_images[view_name]))
+
+            # Validation
+            if len(t1_paths) != len(target_views) or len(t2_paths) != len(target_views):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Number of images does not match number of target views",
+                )
+
+            # Build prompt using shared context + specific query images
+            img_paths, human_str = build_prompt(
+                ref_img_paths=context["ref_img_paths"],
+                ref_progress_ints=context["ref_progress_ints"],
+                target_img_paths_t1=t1_paths,
+                target_img_paths_t2=t2_paths,
+                reference_view_names=context["reference_view_names"],
+                target_view_names=target_views,
+                task_desc=context["task_desc"],
+            )
+
+            # Build messages
+            # Note: build_qwen_messages expects absolute paths, build_prompt returns them if input was absolute.
+            # We assume client sends absolute paths or paths valid relative to server CWD.
+            # Ideally client sends absolute paths.
+            msgs = build_qwen_messages(human_str, img_paths)
+            msgs_list.append(msgs)
 
         # Run batch inference
-        rewards = inference.infer_from_messages_batch([msgs])
+        rewards = inference.infer_from_messages_batch(msgs_list)
 
-        return {"reward": rewards[0]}
+        return {"rewards": rewards}
     finally:
-        # 清理本次请求生成的临时图片文件
+        # Clean up temporary image files created for this request
         for p in tmp_files:
             try:
                 os.remove(p)

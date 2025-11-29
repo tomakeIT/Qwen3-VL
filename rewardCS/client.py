@@ -1,13 +1,13 @@
 
 import base64
 from io import BytesIO
-from typing import Any, Dict, List, Mapping, Optional
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Union
 
 import requests
 
 try:
     from PIL import Image
-except ImportError:  # PIL 只在需要时才真正用到
+except ImportError:  # PIL is only required when image mode is used
     Image = None
 
 class RewardClient:
@@ -38,35 +38,35 @@ class RewardClient:
         resp.raise_for_status()
         return resp.json()
 
-    # ---------------- 新版：直接发送已加载图像 ----------------
+    # ---------------- New: send pre-loaded images directly ----------------
     @staticmethod
     def _encode_image_to_base64(img: Any) -> str:
         """
-        将各种常见格式的图像统一转成 base64 字符串（PNG 编码）。
-        支持：
-        - 已加载的 PIL.Image
-        - 文件路径（str）
-        - torch.Tensor 或 numpy.ndarray（形状为 HWC 或 CHW，值在 [0,1] 或 [0,255]）
+        Convert various common image formats into a base64 string (PNG encoded).
+        Supported input types:
+        - pre-loaded PIL.Image
+        - file path (str)
+        - torch.Tensor or numpy.ndarray (shape HWC or CHW, values in [0,1] or [0,255])
         """
-        # 延迟导入，避免在不用图像模式时强依赖这些库
+        # Lazy import so that we don't hard-require these libs when image mode is unused
         global Image
         if Image is None:
             try:
                 from PIL import Image as Image  # type: ignore
             except Exception as e:  # pragma: no cover - 环境相关
                 raise RuntimeError(
-                    "Pillow 未安装，无法对图像进行编码。请先 `pip install pillow`。"
+                    "Pillow is required to encode images. Please install it via `pip install pillow`."
                 ) from e
 
-        # 1) 如果是 PIL.Image
+        # 1) PIL.Image instance
         if hasattr(Image, "Image") and isinstance(img, Image.Image):  # type: ignore[attr-defined]
             pil_img = img
         else:
-            # 2) 如果是字符串，看作文件路径
+            # 2) If it's a string, treat as a file path
             if isinstance(img, str):
                 pil_img = Image.open(img).convert("RGB")  # type: ignore[operator]
             else:
-                # 3) 尝试 torch.Tensor / numpy.ndarray
+                # 3) Try torch.Tensor / numpy.ndarray
                 try:
                     import torch  # type: ignore
                 except Exception:
@@ -81,8 +81,8 @@ class RewardClient:
                 if torch is not None and isinstance(img, torch.Tensor):  # type: ignore[attr-defined]
                     t = img.detach().cpu()
                     if t.ndim != 3:
-                        raise ValueError("仅支持 3 维图像张量（CHW 或 HWC）")
-                    # 归一化到 [0,255]
+                        raise ValueError("Only 3D image tensors (CHW or HWC) are supported")
+                    # Normalize to [0, 255]
                     if t.max() <= 1.0:
                         t = t * 255.0
                     t = t.clamp(0, 255).byte()
@@ -94,7 +94,7 @@ class RewardClient:
                 elif np is not None and isinstance(img, np.ndarray):  # type: ignore[attr-defined]
                     arr = img
                     if arr.ndim != 3:
-                        raise ValueError("仅支持 3 维图像数组（HWC 或 CHW）")
+                        raise ValueError("Only 3D image arrays (HWC or CHW) are supported")
                     arr = arr.astype("float32")
                     if arr.max() <= 1.0:
                         arr = arr * 255.0
@@ -106,8 +106,8 @@ class RewardClient:
 
                 if pil_img is None:
                     raise TypeError(
-                        f"不支持的图像类型：{type(img)}。"
-                        "请传入 PIL.Image、文件路径、torch.Tensor 或 numpy.ndarray。"
+                        f"Unsupported image type: {type(img)}. "
+                        "Expected PIL.Image, file path, torch.Tensor or numpy.ndarray."
                     )
 
         buf = BytesIO()
@@ -117,42 +117,70 @@ class RewardClient:
 
     def predict(
         self,
-        t1: Mapping[str, Any],
-        t2: Mapping[str, Any],
+        t1: Union[Mapping[str, Any], Sequence[Mapping[str, Any]]],
+        t2: Union[Mapping[str, Any], Sequence[Mapping[str, Any]]],
     ):
         """
-        获取一对时刻 (t1, t2) 的奖励。
+        Get reward(s) for one or multiple (t1, t2) time steps (supports batch).
 
-        只支持一种推荐用法：传「视角名 -> 已加载图像」字典
+        Usage:
+        1) Single query:
             - t1: Dict[view_name, image]
             - t2: Dict[view_name, image]
-              其中 image 可以是 PIL.Image / torch.Tensor / numpy.ndarray / 路径字符串
+        2) Batch:
+            - t1: List[Dict[view_name, image]]
+            - t2: List[Dict[view_name, image]]
+        `image` can be PIL.Image / torch.Tensor / numpy.ndarray / path string
 
         Args:
-            t1: t1 时刻的图像
-            t2: t2 时刻的图像
+            t1: images or image batch at time t1
+            t2: images or image batch at time t2
 
         Returns:
-            Reward (integer).
+            Single query: int
+            Batch: List[int]
         """
-        t1_images: Dict[str, str] = {}
-        t2_images: Dict[str, str] = {}
+        # Normalize into batch lists
+        is_single = isinstance(t1, Mapping) and isinstance(t2, Mapping)
+        if is_single:
+            t1_list: List[Mapping[str, Any]] = [t1]  # type: ignore[list-item]
+            t2_list: List[Mapping[str, Any]] = [t2]  # type: ignore[list-item]
+        else:
+            if not isinstance(t1, Sequence) or not isinstance(t2, Sequence):
+                raise ValueError("In batch mode, t1 and t2 must both be sequences (List[Dict[view, image]]).")
+            t1_list = list(t1)  # type: ignore[arg-type]
+            t2_list = list(t2)  # type: ignore[arg-type]
+            if len(t1_list) != len(t2_list):
+                raise ValueError("t1 和 t2 的 batch 长度必须一致")
 
-        if set(t1.keys()) != set(t2.keys()):
-            raise ValueError("t1 和 t2 的视角 key 集合必须完全一致")
+        queries: List[Dict[str, Dict[str, str]]] = []
 
-        for view_name in t1.keys():
-            t1_images[view_name] = self._encode_image_to_base64(t1[view_name])
-            t2_images[view_name] = self._encode_image_to_base64(t2[view_name])
+        for t1_item, t2_item in zip(t1_list, t2_list):
+            if set(t1_item.keys()) != set(t2_item.keys()):
+                raise ValueError("For each query, t1 and t2 must have the same set of view keys.")
+
+            t1_images: Dict[str, str] = {}
+            t2_images: Dict[str, str] = {}
+
+            for view_name in t1_item.keys():
+                t1_images[view_name] = self._encode_image_to_base64(t1_item[view_name])
+                t2_images[view_name] = self._encode_image_to_base64(t2_item[view_name])
+
+            queries.append(
+                {
+                    "t1_images": t1_images,
+                    "t2_images": t2_images,
+                }
+            )
 
         payload = {
-            "t1_images": t1_images,
-            "t2_images": t2_images,
+            "queries": queries,
         }
 
         resp = requests.post(f"{self.url}/predict", json=payload)
         resp.raise_for_status()
-        return resp.json()["reward"]
+        rewards = resp.json()["rewards"]
+        return rewards[0] if is_single else rewards
 
 
 if __name__ == "__main__":
@@ -183,7 +211,7 @@ if __name__ == "__main__":
     init_resp = client.init_task(
         task_desc=args.task_desc,
         reference_views=args.ref_views,
-        # 这里直接在代码里约定 target views，调用 predict 时会用 dict 的 key 来对应视角名
+        # Target views are hard-coded here; predict() will use dict keys to match them
         target_views=["first_person_camera", "left_hand_camera", "right_hand_camera"],
         reference_demo_path=args.ref_demo,
     )
@@ -204,11 +232,11 @@ if __name__ == "__main__":
     t1_abs = [os.path.join(DATA_ROOT, p) for p in default_t1_rel]
     t2_abs = [os.path.join(DATA_ROOT, p) for p in default_t2_rel]
 
-    # 使用「视角名 -> 已加载图像」的 dict 形式调用
+    # Use the dict form: "view_name -> pre-loaded image"
     try:
         from PIL import Image as PILImage  # type: ignore
     except Exception as e:
-        print("示例需要 Pillow 来加载图像，请先安装：pip install pillow")
+        print("This example requires Pillow to load images. Please install it via: pip install pillow")
         raise
 
     t1_images = {
@@ -222,5 +250,13 @@ if __name__ == "__main__":
         "right_hand_camera": PILImage.open(t2_abs[2]).convert("RGB"),
     }
 
+    # Single prediction
     reward = client.predict(t1_images, t2_images)
     print(f"Prediction Result (Reward): {reward}")
+
+    # Batch prediction: repeat the same query N times as a simple example
+    batch_size = 4
+    t1_batch = [t1_images] * batch_size
+    t2_batch = [t2_images] * batch_size
+    rewards = client.predict(t1_batch, t2_batch)
+    print(f"Batch Prediction Result (Rewards): {rewards}")

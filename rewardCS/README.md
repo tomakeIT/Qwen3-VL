@@ -1,16 +1,19 @@
-## 简介
+## Overview
 
-`rewardCS` 提供一个 **HTTP 奖励打分服务**，基于 Qwen-VL 模型评估同一任务下两帧图像的进度差（delta progress）。  
-包含：
-- `server.py`：启动 FastAPI 服务，对外暴露 `/init_task` 和 `/predict` 接口  
-- `client.py`：简单的 Python 客户端与命令行示例
+`rewardCS` provides an **HTTP reward scoring service** based on a Qwen-VL model,  
+which evaluates the delta progress between two time steps (image pairs) under the same task.
 
-具体使用看sever.py client.py 的main()函数
+Components:
+- `server.py`: starts a FastAPI service exposing `/init_task` and `/predict` endpoints  
+- `client.py`: a simple Python client with command-line examples
 
-## 依赖
-### 服务端（`server.py`）依赖
+For the most up-to-date usage patterns, please refer to the `main()` functions in `server.py` and `client.py`.
 
-运行 FastAPI 服务以及加载 Qwen-VL 模型需要这些库, 我们使用的是python 3.10：
+## Dependencies
+
+### Server (`server.py`)
+
+To run the FastAPI service and load the Qwen-VL model (tested with Python 3.10), install:
 
 ```bash
 pip install \
@@ -25,4 +28,6 @@ pip install \
 
 pip install "flash-attn==2.7.4.post1" --no-build-isolation
 ```
-Notice: 这里的flash-attn要是没有代理或者VPN的话就会安装失败 可以手动下载Wheel包安装
+
+Notice: installing `flash-attn` may fail without a proxy/VPN.  
+In that case, you can manually download a compatible wheel and install it locally.
