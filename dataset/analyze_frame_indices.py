@@ -24,7 +24,7 @@ def main():
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument('--json', required=True, help='JSON data samples file')
-    parser.add_argument('--base_dir', required=True, help='Base directory for images')
+    parser.add_argument('--base_dir', default="/home/lightwheel/erdao.liang/LightwheelData", help='Base directory for images')
     parser.add_argument('--output', default='frame_indices_stats.png', help='Output plot file')
     args = parser.parse_args()
 
