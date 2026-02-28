@@ -55,6 +55,93 @@ L90L3PickUpTheCreamCheeseAndPutItInTheTray = {
     "data_path": "/home/lightwheel/erdao.liang/LightwheelData"
 }
 
+ExampleDataPickUpTheCube = {
+    "annotation_path": "/home/lightwheel/erdao.liang/LightwheelData/dataset_pickup_cube/train/GrabTheBlockAndLiftItUp.json",
+    "data_path": "/home/lightwheel/erdao.liang/LightwheelData",
+}
+
+LSPickUpBlackBowlBetweenPlateAndRamekinAndPlaceItOnPlate = {
+    "annotation_path": "/home/lightwheel/erdao.liang/LightwheelData/lerobot_old/train/LSPickUpBlackBowlBetweenPlateAndRamekinAndPlaceItOnPlate.json",
+    "data_path": "/home/lightwheel/erdao.liang/LightwheelData/lerobot_old",
+}
+
+PickCoffeeMug = {
+    "annotation_path": "/home/lightwheel/erdao.liang/LightwheelData/lerobot_old/train/PickCoffeeMug.json",
+    "data_path": "/home/lightwheel/erdao.liang/LightwheelData/lerobot_old",
+}
+
+ArrangeVegetables = {
+    "annotation_path": "/home/lightwheel/erdao.liang/LightwheelData/slowdata/data_1W_Robocasa_X7s/train/ArrangeVegetables.json",
+    "data_path": "/home/lightwheel/erdao.liang/LightwheelData/slowdata/",
+}
+
+BreadAndCheese = {
+    "annotation_path": "/home/lightwheel/erdao.liang/LightwheelData/slowdata/data_1W_Robocasa_X7s/train/BreadAndCheese.json",
+    "data_path": "/home/lightwheel/erdao.liang/LightwheelData/slowdata/",
+}
+
+BreadSetupSlicing = {
+    "annotation_path": "/home/lightwheel/erdao.liang/LightwheelData/slowdata/data_1W_Robocasa_X7s/train/BreadSetupSlicing.json",
+    "data_path": "/home/lightwheel/erdao.liang/LightwheelData/slowdata/",
+}
+
+CheesyBread = {
+    "annotation_path": "/home/lightwheel/erdao.liang/LightwheelData/slowdata/data_1W_Robocasa_X7s/train/CheesyBread.json",
+    "data_path": "/home/lightwheel/erdao.liang/LightwheelData/slowdata/",
+}
+
+CloseDishwasher = {
+    "annotation_path": "/home/lightwheel/erdao.liang/LightwheelData/slowdata/data_1W_Robocasa_X7s/train/CloseDishwasher.json",
+    "data_path": "/home/lightwheel/erdao.liang/LightwheelData/slowdata/",
+}
+
+CloseDrawer = {
+    "annotation_path": "/home/lightwheel/erdao.liang/LightwheelData/slowdata/data_1W_Robocasa_X7s/train/CloseDrawer.json",
+    "data_path": "/home/lightwheel/erdao.liang/LightwheelData/slowdata/",
+}
+
+CloseFridge = {
+    "annotation_path": "/home/lightwheel/erdao.liang/LightwheelData/slowdata/data_1W_Robocasa_X7s/train/CloseFridge.json",
+    "data_path": "/home/lightwheel/erdao.liang/LightwheelData/slowdata/",
+}
+
+CloseMicrowave = {
+    "annotation_path": "/home/lightwheel/erdao.liang/LightwheelData/slowdata/data_1W_Robocasa_X7s/train/CloseMicrowave.json",
+    "data_path": "/home/lightwheel/erdao.liang/LightwheelData/slowdata/",
+}
+
+CoffeeServeMug = {
+    "annotation_path": "/home/lightwheel/erdao.liang/LightwheelData/slowdata/data_1W_Robocasa_X7s/train/CoffeeServeMug.json",
+    "data_path": "/home/lightwheel/erdao.liang/LightwheelData/slowdata/",
+}
+
+CoffeeSetupMug = {
+    "annotation_path": "/home/lightwheel/erdao.liang/LightwheelData/slowdata/data_1W_Robocasa_X7s/train/CoffeeSetupMug.json",
+    "data_path": "/home/lightwheel/erdao.liang/LightwheelData/slowdata/",
+}
+
+OpenDishwasher = {
+    "annotation_path": "/home/lightwheel/erdao.liang/LightwheelData/slowdata/data_1W_Robocasa_X7s/train/OpenDishwasher.json",
+    "data_path": "/home/lightwheel/erdao.liang/LightwheelData/slowdata/",
+}
+
+OpenDrawer = {
+    "annotation_path": "/home/lightwheel/erdao.liang/LightwheelData/slowdata/data_1W_Robocasa_X7s/train/OpenDrawer.json",
+    "data_path": "/home/lightwheel/erdao.liang/LightwheelData/slowdata/",
+}
+
+OpenFridge = {
+    "annotation_path": "/home/lightwheel/erdao.liang/LightwheelData/slowdata/data_1W_Robocasa_X7s/train/OpenFridge.json",
+    "data_path": "/home/lightwheel/erdao.liang/LightwheelData/slowdata/",
+}
+
+OpenMicrowave = {
+    "annotation_path": "/home/lightwheel/erdao.liang/LightwheelData/slowdata/data_1W_Robocasa_X7s/train/OpenMicrowave.json",
+    "data_path": "/home/lightwheel/erdao.liang/LightwheelData/slowdata/",
+}
+
+
+
 
 data_dict = {
     # "demo": DEMO_DATA,
@@ -66,6 +153,23 @@ data_dict = {
     "put_both_moka_pots_on_stove": L10K8PutBothMokaPotsOnTheStove,
     "stack_middle_black_bowl_on_back_black_bowl": L90K2StackTheMiddleBlackBowlOnTheBackBlackBowl,
     "pick_up_cream_cheese_and_put_in_tray": L90L3PickUpTheCreamCheeseAndPutItInTheTray,
+    "pick_up_cube": ExampleDataPickUpTheCube,
+    "pick_up_black_bowl_between_plate_and_ramekin_and_place_it_on_plate": LSPickUpBlackBowlBetweenPlateAndRamekinAndPlaceItOnPlate,
+    "pick_up_coffee_mug": PickCoffeeMug,
+    "robocasa_x7s_arrange_vegetables": ArrangeVegetables,
+    "robocasa_x7s_bread_and_cheese": BreadAndCheese,
+    "robocasa_x7s_bread_setup_slicing": BreadSetupSlicing,
+    "robocasa_x7s_cheesy_bread": CheesyBread,
+    "robocasa_x7s_close_dishwasher": CloseDishwasher,
+    "robocasa_x7s_close_drawer": CloseDrawer,
+    "robocasa_x7s_close_fridge": CloseFridge,
+    "robocasa_x7s_close_microwave": CloseMicrowave,
+    "robocasa_x7s_coffee_serve_mug": CoffeeServeMug,
+    "robocasa_x7s_coffee_setup_mug": CoffeeSetupMug,
+    "robocasa_x7s_open_dishwasher": OpenDishwasher,
+    "robocasa_x7s_open_drawer": OpenDrawer,
+    "robocasa_x7s_open_fridge": OpenFridge,
+    "robocasa_x7s_open_microwave": OpenMicrowave,
 }
 
 

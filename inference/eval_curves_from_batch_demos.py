@@ -14,7 +14,7 @@ from types import SimpleNamespace
 from typing import List, Optional, Dict, Any, Tuple
 from tqdm import tqdm
 
-from inferencer import DeltaProgressInference
+from multi_gpu_inferencer import MultiGPUDeltaProgressInference
 from utils.utils import list_image_files, dict_to_namespace
 from inference_curve_from_demo import infer_progress_curve
 
@@ -98,7 +98,7 @@ def compute_ground_truth_curve(frame_indices: np.ndarray) -> np.ndarray:
 
 
 def evaluate_curves(
-    inference: DeltaProgressInference,
+    inference: MultiGPUDeltaProgressInference,
     demo_list: List[Dict[str, Any]],
     reference_demo_path: Optional[str],
     task_desc: str,
@@ -107,6 +107,7 @@ def evaluate_curves(
     step_interval: int = 1,
     start_frame: int = 0,
     end_frame: Optional[int] = None,
+    batch_size: int = 1,
 ) -> Tuple[Dict[str, float], List[Tuple[np.ndarray, np.ndarray]]]:
     """批量推理多个demo的progress curve并计算评估指标
     
@@ -120,6 +121,7 @@ def evaluate_curves(
         step_interval: 采样间隔
         start_frame: 起始帧
         end_frame: 结束帧
+        batch_size: 每个demo内部推理时的batch大小
         
     Returns:
         包含平均指标的字典和所有curve数据列表（每个元素为(frame_indices, progress_values, T)）
@@ -162,6 +164,7 @@ def evaluate_curves(
                 step_interval=step_interval,
                 start_frame=start_frame,
                 end_frame=end_frame,
+                batch_size=batch_size,
             )
             
             if frame_indices.size == 0 or progress_values.size == 0:
@@ -219,10 +222,11 @@ def main(args):
     
     print(f"共 {len(demo_list)} 个demo")
     
-    # 加载模型
-    inference = DeltaProgressInference(
+    # 初始化推理器（自动处理单/多 GPU）
+    inference = MultiGPUDeltaProgressInference(
         base_model_path=args.base_model,
         adapter_path=args.adapter,
+        num_gpus=args.num_gpus,
     )
     
     # 批量推理并计算指标
@@ -237,6 +241,7 @@ def main(args):
         step_interval=args.step_interval,
         start_frame=args.start_frame,
         end_frame=args.end_frame,
+        batch_size=args.batch_size,
     )
     
     # 绘制所有curve
@@ -259,7 +264,7 @@ def main(args):
     print("\n" + "="*50)
     print("评估结果:")
     print(f"有效demo数量: {metrics['num_valid_demos']}")
-    print(f"Pearson Correlation: {metrics['pearson']:.4f}")
+    print(f"Qwen3-VL/inference/eval_curves_from_batch_demos.py: {metrics['pearson']:.4f}")
     print(f"Spearman Correlation: {metrics['spearman']:.4f}")
     print(f"Normalized Total Variation: {metrics['norm_total_variation']:.4f}")
     print(f"Monotonicity Rate: {metrics['monotonicity_rate']:.4f}")
@@ -285,6 +290,8 @@ if __name__ == "__main__":
     parser.add_argument("--end-frame", type=int, default=None, help="结束帧")
     parser.add_argument("--output", type=str, default=None, help="可选：保存结果到JSON文件")
     parser.add_argument("--plot-output", type=str, default="./curves.png", help="可选：保存curve图路径")
+    parser.add_argument("--batch-size", type=int, default=1, help="每个demo内部的推理batch大小，大于1时加速推理")
+    parser.add_argument("--num-gpus", type=int, default=1, help="使用的GPU数量（默认1，设为-1使用所有可用GPU）")
     args = parser.parse_args()
     
     main(args)

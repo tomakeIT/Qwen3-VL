@@ -7,6 +7,7 @@ import logging
 from types import SimpleNamespace
 from typing import List, Dict, Any, Tuple, Optional
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from tqdm import tqdm
 
 from utils.prompt import build_prompt
 from utils.data_formatting import (
@@ -80,7 +81,7 @@ class DatasetBuilder:
         logger.info(f"Processing task ({split_name}): {task_name}")
 
         # for each demo in task
-        for demo_name in demo_names:
+        for demo_idx, demo_name in enumerate(tqdm(demo_names, desc=f"Processing demos for {task_name} ({split_name})")):
             demo_path = os.path.join(task_path, demo_name)
 
             # get all frames for all views

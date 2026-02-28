@@ -13,7 +13,7 @@ from types import SimpleNamespace
 from typing import List, Optional, Tuple, Dict
 from tqdm import tqdm
 
-from inferencer import DeltaProgressInference
+from multi_gpu_inferencer import MultiGPUDeltaProgressInference
 from utils.utils import list_image_files, dict_to_namespace
 from inference_pairwise_from_demo import build_messages_from_demo
 
@@ -44,7 +44,7 @@ def load_frames_for_indices(target_demo_path: str, target_views: List[str], fram
     return loaded_frames
 
 def infer_progress_curve(
-    inference: DeltaProgressInference,
+    inference: MultiGPUDeltaProgressInference,
     target_demo_path: str,
     reference_demo_path: Optional[str],
     task_desc: str,
@@ -53,8 +53,26 @@ def infer_progress_curve(
     step_interval: int = 1,
     start_frame: int = 0,
     end_frame: Optional[int] = None,
+    batch_size: int = 1,
 ) -> Tuple[np.ndarray, np.ndarray]:
-    """给定target_demo路径，逐步采样并生成progress曲线"""
+    """给定target_demo路径，逐步采样并生成progress曲线
+    
+    Args:
+        inference: DeltaProgressInference实例
+        target_demo_path: target demo路径
+        reference_demo_path: reference demo路径
+        task_desc: 任务描述
+        target_views: target视角列表
+        reference_config: reference配置
+        step_interval: 采样间隔
+        start_frame: 起始帧
+        end_frame: 结束帧
+        batch_size: batch大小，大于1时使用batch推理
+        
+    Returns:
+        frame_indices: 帧索引数组
+        progress_values: progress值数组
+    """
     view_to_frames: Dict[str, List[str]] = {}
     for v in target_views:
         v_path = os.path.join(target_demo_path, v)
@@ -70,46 +88,87 @@ def infer_progress_curve(
     else:
         end_frame = min(end_frame, T - 1)
     
-    frame_indices = []
-    progress_values = []
-    current_progress = 0
-
+    # 预生成所有 (i, j) 对
     progress_range = range(start_frame, end_frame, step_interval)
-    for i in tqdm(progress_range, desc="Progress curve inference"):
+    ij_pairs = []
+    for i in progress_range:
         j = i + step_interval
         if j > end_frame:
             break
+        ij_pairs.append((i, j))
+    
+    if len(ij_pairs) == 0:
+        return np.array([]), np.array([])
+    
+    frame_indices = []
+    progress_values = []
+    current_progress = 0
+    
+    if batch_size > 1:
+        # Batch 推理模式（支持多GPU）
+        print(f"使用 batch 推理，batch_size={batch_size}")
         
-        messages = build_messages_from_demo(
-            target_demo_path=target_demo_path,
-            i=i,
-            j=j,
-            reference_demo_path=reference_demo_path,
-            task_desc=task_desc,
-            target_views=target_views,
-            reference_config=reference_config,
+        # 预生成所有 messages
+        messages_list = []
+        for i, j in tqdm(ij_pairs, desc="Building messages"):
+            messages = build_messages_from_demo(
+                target_demo_path=target_demo_path,
+                i=i,
+                j=j,
+                reference_demo_path=reference_demo_path,
+                task_desc=task_desc,
+                target_views=target_views,
+                reference_config=reference_config,
+            )
+            messages_list.append(messages)
+        
+        # Batch 推理（自动多GPU并行）
+        all_results = inference.infer_from_messages_batch(
+            messages_list, 
+            batch_size=batch_size,
+            desc="Batch inference"
         )
         
-        delta_progress = inference.infer_from_messages(messages)
-        
-        if delta_progress is not None:
-            current_progress += delta_progress
-            frame_indices.append(j)
-            progress_values.append(current_progress)
+        # 累加 progress
+        for idx, (i, j) in enumerate(ij_pairs):
+            delta_progress = all_results[idx]
+            if delta_progress is not None:
+                current_progress += delta_progress
+                frame_indices.append(j)
+                progress_values.append(current_progress)
+    else:
+        # 单条推理模式（原始逻辑）
+        for i, j in tqdm(ij_pairs, desc="Progress curve inference"):
+            messages = build_messages_from_demo(
+                target_demo_path=target_demo_path,
+                i=i,
+                j=j,
+                reference_demo_path=reference_demo_path,
+                task_desc=task_desc,
+                target_views=target_views,
+                reference_config=reference_config,
+            )
+            
+            delta_progress = inference.infer_from_messages(messages)
+            
+            if delta_progress is not None:
+                current_progress += delta_progress
+                frame_indices.append(j)
+                progress_values.append(current_progress)
     
     return np.array(frame_indices), np.array(progress_values)
 
 
 def save_curve_plot(frame_indices: np.ndarray, progress_values: np.ndarray, output_path: str, task_name: Optional[str] = None):
     """保存progress曲线图"""
-    plt.figure(figsize=(12, 6))
+    plt.figure(figsize=(18, 3))
     plt.plot(frame_indices, progress_values, 'b-', linewidth=2, marker='o', markersize=4)
     plt.xlabel('Frame Index', fontsize=12)
     plt.ylabel('Progress (integer)', fontsize=12)
     plt.title(f'Task Progress Curve{f" - {task_name}" if task_name else ""}', fontsize=14)
     plt.grid(True, alpha=0.3)
     plt.tight_layout()
-    plt.savefig(output_path, dpi=150, bbox_inches='tight')
+    plt.savefig(output_path, dpi=600, bbox_inches='tight')
     plt.close()
 
 
@@ -188,9 +247,11 @@ def main(args):
     
     config = dict_to_namespace(config_dict)
     
-    inference = DeltaProgressInference(
+    # 初始化推理器（自动处理单/多 GPU）
+    inference = MultiGPUDeltaProgressInference(
         base_model_path=args.base_model,
         adapter_path=args.adapter,
+        num_gpus=args.num_gpus,
     )
     
     target_views = config.sampling.required_views
@@ -204,6 +265,7 @@ def main(args):
         step_interval=args.step_interval,
         start_frame=args.start_frame,
         end_frame=args.end_frame,
+        batch_size=args.batch_size,
     )
     
     # 加载视频帧
@@ -238,6 +300,8 @@ if __name__ == "__main__":
     parser.add_argument("--end-frame", type=int, default=None, help="结束帧")
     parser.add_argument("--output-dir", type=str, default="outputs/inference_progress_curve", help="输出目录")
     parser.add_argument("--output-fps", type=float, default=5.0, help="输出视频fps")
+    parser.add_argument("--batch-size", type=int, default=1, help="Batch推理大小，大于1时使用batch推理加速")
+    parser.add_argument("--num-gpus", type=int, default=1, help="使用的GPU数量（默认1，设为-1使用所有可用GPU）")
     
     args = parser.parse_args()
     main(args)

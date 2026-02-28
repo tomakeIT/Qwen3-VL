@@ -24,18 +24,18 @@ model_path=/home/lightwheel/erdao.liang/Qwen3-VL/models/Qwen-VL-2B-Instruct # Us
 
 # Training hyperparameters
 lr=1e-4
-batch_size=12
+batch_size=8
 grad_accum_steps=32
 model_max_length=2048
-num_train_epochs=1000
+num_train_epochs=300
 # Training entry point
 entry_file=qwenvl/train/train_qwen.py
 
 # Dataset configuration (replace with public dataset names)
-datasets=pick_up_coffee_mug
+datasets=robocasa_x7s_arrange_vegetables,robocasa_x7s_bread_and_cheese,robocasa_x7s_bread_setup_slicing,robocasa_x7s_cheesy_bread,robocasa_x7s_close_dishwasher,robocasa_x7s_close_drawer,robocasa_x7s_close_fridge,robocasa_x7s_close_microwave,robocasa_x7s_coffee_serve_mug,robocasa_x7s_coffee_setup_mug,robocasa_x7s_open_dishwasher,robocasa_x7s_open_drawer,robocasa_x7s_open_fridge,robocasa_x7s_open_microwave
 
 # wandb run
-run_name="lerobot_PickCoffeeMug_A40"
+run_name="lerobot_Robocasa_X7s_A40"
 
 
 # checkpoint saving
@@ -76,7 +76,7 @@ args="
     --logging_steps 1 \
     --model_max_length ${model_max_length} \
     --gradient_checkpointing True \
-    --dataloader_num_workers 32 \
+    --dataloader_num_workers 4 \
     --run_name ${run_name} \
     --report_to wandb"
 
