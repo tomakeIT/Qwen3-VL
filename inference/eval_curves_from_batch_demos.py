@@ -7,6 +7,7 @@ import os
 import argparse
 import yaml
 import json
+from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.stats import pearsonr, spearmanr
@@ -16,6 +17,7 @@ from tqdm import tqdm
 
 from multi_gpu_inferencer import MultiGPUDeltaProgressInference
 from utils.utils import list_image_files, dict_to_namespace
+from inference_pairwise_from_demo import build_messages_from_demo
 from inference_curve_from_demo import infer_progress_curve
 
 
@@ -97,6 +99,151 @@ def compute_ground_truth_curve(frame_indices: np.ndarray) -> np.ndarray:
     return progress.astype(np.float32)
 
 
+def _parse_demo_item(demo_item: Any, reference_demo_path: Optional[str]) -> Optional[Tuple[str, Optional[str]]]:
+    """统一解析 demo 项，返回 (target_demo_path, reference_demo_path)。"""
+    if isinstance(demo_item, str):
+        return demo_item, reference_demo_path
+    if isinstance(demo_item, dict):
+        target_demo_path = demo_item.get("target_demo", demo_item.get("demo", ""))
+        demo_reference_demo_path = demo_item.get("reference_demo", reference_demo_path)
+        return target_demo_path, demo_reference_demo_path
+    return None
+
+
+def _build_episode_pairs(
+    target_demo_path: str,
+    target_views: List[str],
+    step_interval: int,
+    start_frame: int,
+    end_frame: Optional[int],
+) -> Tuple[int, List[Tuple[int, int]], np.ndarray]:
+    """构建单个 episode 的 (i, j) 推理对与对应 frame_indices。"""
+    view_to_frames: Dict[str, List[str]] = {}
+    for v in target_views:
+        v_path = os.path.join(target_demo_path, v)
+        frames = list_image_files(v_path)
+        view_to_frames[v] = frames
+
+    T = min(len(frames) for frames in view_to_frames.values())
+    if T < 2:
+        return T, [], np.array([])
+
+    if end_frame is None:
+        valid_end_frame = T - 1
+    else:
+        valid_end_frame = min(end_frame, T - 1)
+
+    ij_pairs: List[Tuple[int, int]] = []
+    frame_indices: List[int] = []
+    for i in range(start_frame, valid_end_frame, step_interval):
+        j = i + step_interval
+        if j > valid_end_frame:
+            break
+        ij_pairs.append((i, j))
+        frame_indices.append(j)
+
+    return T, ij_pairs, np.array(frame_indices)
+
+
+def _build_message_for_job(
+    job: Dict[str, Any],
+    task_desc: str,
+    target_views: List[str],
+    reference_config: SimpleNamespace,
+) -> Tuple[int, int, List[Dict[str, Any]]]:
+    """为单个 job 构建 messages。"""
+    messages = build_messages_from_demo(
+        target_demo_path=job["target_demo_path"],
+        i=job["i"],
+        j=job["j"],
+        reference_demo_path=job["reference_demo_path"],
+        task_desc=task_desc,
+        target_views=target_views,
+        reference_config=reference_config,
+    )
+    return job["episode_id"], job["pair_idx"], messages
+
+
+def evaluate_curves_legacy(
+    inference: MultiGPUDeltaProgressInference,
+    demo_list: List[Dict[str, Any]],
+    reference_demo_path: Optional[str],
+    task_desc: str,
+    target_views: List[str],
+    reference_config: SimpleNamespace,
+    step_interval: int = 1,
+    start_frame: int = 0,
+    end_frame: Optional[int] = None,
+    batch_size: int = 1,
+) -> Tuple[Dict[str, float], List[Tuple[np.ndarray, np.ndarray]]]:
+    """原始串行 episode 评估逻辑（保留作回退模式）。"""
+    pearsons, spearmans = [], []
+    norm_total_vars = []
+    monotonicity_rates = []
+    all_curves = []
+
+    print(f"正在批量推理 {len(demo_list)} 个demo的progress curve（legacy模式）...")
+
+    for demo_item in tqdm(demo_list, desc="推理progress curves"):
+        parsed = _parse_demo_item(demo_item, reference_demo_path)
+        if parsed is None:
+            print(f"警告：跳过无效的demo项: {demo_item}")
+            continue
+
+        target_demo_path, demo_reference_demo_path = parsed
+        if not target_demo_path or not os.path.exists(target_demo_path):
+            print(f"警告：demo路径不存在，跳过: {target_demo_path}")
+            continue
+
+        try:
+            T = min(len(list_image_files(os.path.join(target_demo_path, v))) for v in target_views)
+            frame_indices, progress_values = infer_progress_curve(
+                inference=inference,
+                target_demo_path=target_demo_path,
+                reference_demo_path=demo_reference_demo_path,
+                task_desc=task_desc,
+                target_views=target_views,
+                reference_config=reference_config,
+                step_interval=step_interval,
+                start_frame=start_frame,
+                end_frame=end_frame,
+                batch_size=batch_size,
+            )
+
+            if frame_indices.size == 0 or progress_values.size == 0:
+                print(f"警告：demo {target_demo_path} 没有有效的progress值，跳过")
+                continue
+
+            gt_progress = compute_ground_truth_curve(frame_indices)
+            if gt_progress.size != progress_values.size:
+                print(f"警告：demo {target_demo_path} 的frame_indices和progress_values长度不匹配，跳过")
+                continue
+
+            pearson, spearman = calc_correlation(progress_values, gt_progress)
+            _, norm_tv = calc_total_variation(progress_values)
+            monotonicity_rate = calc_monotonicity_rate(progress_values)
+
+            pearsons.append(pearson)
+            spearmans.append(spearman)
+            norm_total_vars.append(norm_tv)
+            monotonicity_rates.append(monotonicity_rate)
+            all_curves.append((frame_indices, progress_values, T))
+        except Exception as e:
+            print(f"警告：处理demo {target_demo_path} 时出错: {e}")
+            continue
+
+    def _safe_mean(values: List[float]) -> float:
+        return float(np.mean(values)) if len(values) > 0 else 0.0
+
+    return {
+        "pearson": _safe_mean(pearsons),
+        "spearman": _safe_mean(spearmans),
+        "norm_total_variation": _safe_mean(norm_total_vars),
+        "monotonicity_rate": _safe_mean(monotonicity_rates),
+        "num_valid_demos": len(pearsons),
+    }, all_curves
+
+
 def evaluate_curves(
     inference: MultiGPUDeltaProgressInference,
     demo_list: List[Dict[str, Any]],
@@ -108,6 +255,9 @@ def evaluate_curves(
     start_frame: int = 0,
     end_frame: Optional[int] = None,
     batch_size: int = 1,
+    scheduling_mode: str = "global",
+    global_build_workers: int = 1,
+    max_global_jobs: int = 0,
 ) -> Tuple[Dict[str, float], List[Tuple[np.ndarray, np.ndarray]]]:
     """批量推理多个demo的progress curve并计算评估指标
     
@@ -126,77 +276,173 @@ def evaluate_curves(
     Returns:
         包含平均指标的字典和所有curve数据列表（每个元素为(frame_indices, progress_values, T)）
     """
-    pearsons, spearmans = [], []
-    norm_total_vars = []
-    monotonicity_rates = []
-    all_curves = []
-    
-    print(f"正在批量推理 {len(demo_list)} 个demo的progress curve...")
-    
-    for demo_item in tqdm(demo_list, desc="推理progress curves"):
-        # 解析demo路径
-        if isinstance(demo_item, str):
-            target_demo_path = demo_item
-            demo_reference_demo_path = reference_demo_path
-        elif isinstance(demo_item, dict):
-            target_demo_path = demo_item.get("target_demo", demo_item.get("demo", ""))
-            demo_reference_demo_path = demo_item.get("reference_demo", reference_demo_path)
-        else:
+    if scheduling_mode == "legacy":
+        return evaluate_curves_legacy(
+            inference=inference,
+            demo_list=demo_list,
+            reference_demo_path=reference_demo_path,
+            task_desc=task_desc,
+            target_views=target_views,
+            reference_config=reference_config,
+            step_interval=step_interval,
+            start_frame=start_frame,
+            end_frame=end_frame,
+            batch_size=batch_size,
+        )
+
+    print(f"正在批量推理 {len(demo_list)} 个demo的progress curve（global模式）...")
+
+    episode_metas: List[Dict[str, Any]] = []
+    global_jobs: List[Dict[str, Any]] = []
+    for demo_item in tqdm(demo_list, desc="构建全局jobs"):
+        parsed = _parse_demo_item(demo_item, reference_demo_path)
+        if parsed is None:
             print(f"警告：跳过无效的demo项: {demo_item}")
             continue
-        
+
+        target_demo_path, demo_reference_demo_path = parsed
         if not target_demo_path or not os.path.exists(target_demo_path):
             print(f"警告：demo路径不存在，跳过: {target_demo_path}")
             continue
-        
+
         try:
-            # 计算T值（总帧数）
-            T = min(len(list_image_files(os.path.join(target_demo_path, v))) for v in target_views)
-            
-            # 推理progress curve
-            frame_indices, progress_values = infer_progress_curve(
-                inference=inference,
+            T, ij_pairs, frame_indices = _build_episode_pairs(
                 target_demo_path=target_demo_path,
-                reference_demo_path=demo_reference_demo_path,
-                task_desc=task_desc,
                 target_views=target_views,
-                reference_config=reference_config,
                 step_interval=step_interval,
                 start_frame=start_frame,
                 end_frame=end_frame,
-                batch_size=batch_size,
             )
-            
-            if frame_indices.size == 0 or progress_values.size == 0:
-                print(f"警告：demo {target_demo_path} 没有有效的progress值，跳过")
+            if T < 2 or len(ij_pairs) == 0:
                 continue
-            
-            # 计算ground truth curve（0-100的直线）
-            gt_progress = compute_ground_truth_curve(frame_indices)
-            
-            if gt_progress.size != progress_values.size:
-                print(f"警告：demo {target_demo_path} 的frame_indices和progress_values长度不匹配，跳过")
-                continue
-            
-            # 计算指标
-            pearson, spearman = calc_correlation(progress_values, gt_progress)
-            _, norm_tv = calc_total_variation(progress_values)
-            monotonicity_rate = calc_monotonicity_rate(progress_values)
-            
-            pearsons.append(pearson)
-            spearmans.append(spearman)
-            norm_total_vars.append(norm_tv)
-            monotonicity_rates.append(monotonicity_rate)
-            all_curves.append((frame_indices, progress_values, T))
-            
+
+            episode_id = len(episode_metas)
+            episode_metas.append({
+                "episode_id": episode_id,
+                "target_demo_path": target_demo_path,
+                "reference_demo_path": demo_reference_demo_path,
+                "frame_indices": frame_indices,
+                "T": T,
+                "num_pairs": len(ij_pairs),
+            })
+            for pair_idx, (i, j) in enumerate(ij_pairs):
+                global_jobs.append({
+                    "episode_id": episode_id,
+                    "pair_idx": pair_idx,
+                    "i": i,
+                    "j": j,
+                    "target_demo_path": target_demo_path,
+                    "reference_demo_path": demo_reference_demo_path,
+                })
         except Exception as e:
             print(f"警告：处理demo {target_demo_path} 时出错: {e}")
             continue
-    
-    # 计算平均指标
+
+    if len(global_jobs) == 0:
+        return {
+            "pearson": 0.0,
+            "spearman": 0.0,
+            "norm_total_variation": 0.0,
+            "monotonicity_rate": 0.0,
+            "num_valid_demos": 0,
+        }, []
+
+    episode_predictions: Dict[int, List[Optional[int]]] = {
+        meta["episode_id"]: [None] * meta["num_pairs"] for meta in episode_metas
+    }
+
+    chunk_size = max_global_jobs if max_global_jobs > 0 else len(global_jobs)
+    total_chunks = (len(global_jobs) + chunk_size - 1) // chunk_size
+    effective_workers = max(1, global_build_workers)
+    print(
+        f"全局任务数={len(global_jobs)}，chunk_size={chunk_size}，"
+        f"chunks={total_chunks}，build_workers={effective_workers}"
+    )
+
+    for chunk_idx, chunk_start in enumerate(range(0, len(global_jobs), chunk_size), start=1):
+        chunk_jobs = global_jobs[chunk_start:chunk_start + chunk_size]
+
+        chunk_meta: List[Tuple[int, int]] = []
+        chunk_messages: List[List[Dict[str, Any]]] = []
+
+        if effective_workers == 1:
+            iterator = tqdm(chunk_jobs, desc=f"构建messages[{chunk_idx}/{total_chunks}]")
+            for job in iterator:
+                episode_id, pair_idx, messages = _build_message_for_job(
+                    job, task_desc, target_views, reference_config
+                )
+                chunk_meta.append((episode_id, pair_idx))
+                chunk_messages.append(messages)
+        else:
+            with ThreadPoolExecutor(max_workers=effective_workers) as executor:
+                iterator = executor.map(
+                    _build_message_for_job,
+                    chunk_jobs,
+                    [task_desc] * len(chunk_jobs),
+                    [target_views] * len(chunk_jobs),
+                    [reference_config] * len(chunk_jobs),
+                )
+                for episode_id, pair_idx, messages in tqdm(
+                    iterator,
+                    total=len(chunk_jobs),
+                    desc=f"构建messages[{chunk_idx}/{total_chunks}]",
+                ):
+                    chunk_meta.append((episode_id, pair_idx))
+                    chunk_messages.append(messages)
+
+        chunk_predictions = inference.infer_from_messages_batch(
+            chunk_messages,
+            batch_size=batch_size,
+            desc=f"Global inference [{chunk_idx}/{total_chunks}]",
+        )
+
+        for (episode_id, pair_idx), pred in zip(chunk_meta, chunk_predictions):
+            episode_predictions[episode_id][pair_idx] = pred
+
+    pearsons: List[float] = []
+    spearmans: List[float] = []
+    norm_total_vars: List[float] = []
+    monotonicity_rates: List[float] = []
+    all_curves: List[Tuple[np.ndarray, np.ndarray, int]] = []
+
+    for meta in episode_metas:
+        episode_id = meta["episode_id"]
+        frame_indices_all = meta["frame_indices"]
+        preds = episode_predictions[episode_id]
+
+        current_progress = 0
+        frame_indices_valid: List[int] = []
+        progress_values: List[int] = []
+        for idx, delta_progress in enumerate(preds):
+            if delta_progress is None:
+                continue
+            current_progress += delta_progress
+            frame_indices_valid.append(int(frame_indices_all[idx]))
+            progress_values.append(current_progress)
+
+        if len(frame_indices_valid) == 0 or len(progress_values) == 0:
+            continue
+
+        frame_indices_np = np.array(frame_indices_valid)
+        progress_values_np = np.array(progress_values)
+        gt_progress = compute_ground_truth_curve(frame_indices_np)
+        if gt_progress.size != progress_values_np.size:
+            print(f"警告：episode {meta['target_demo_path']} 结果长度不匹配，跳过")
+            continue
+
+        pearson, spearman = calc_correlation(progress_values_np, gt_progress)
+        _, norm_tv = calc_total_variation(progress_values_np)
+        monotonicity_rate = calc_monotonicity_rate(progress_values_np)
+
+        pearsons.append(pearson)
+        spearmans.append(spearman)
+        norm_total_vars.append(norm_tv)
+        monotonicity_rates.append(monotonicity_rate)
+        all_curves.append((frame_indices_np, progress_values_np, meta["T"]))
+
     def _safe_mean(values: List[float]) -> float:
         return float(np.mean(values)) if len(values) > 0 else 0.0
-    
+
     return {
         "pearson": _safe_mean(pearsons),
         "spearman": _safe_mean(spearmans),
@@ -242,6 +488,9 @@ def main(args):
         start_frame=args.start_frame,
         end_frame=args.end_frame,
         batch_size=args.batch_size,
+        scheduling_mode=args.scheduling_mode,
+        global_build_workers=args.global_build_workers,
+        max_global_jobs=args.max_global_jobs,
     )
     
     # 绘制所有curve
@@ -292,6 +541,9 @@ if __name__ == "__main__":
     parser.add_argument("--plot-output", type=str, default="./curves.png", help="可选：保存curve图路径")
     parser.add_argument("--batch-size", type=int, default=1, help="每个demo内部的推理batch大小，大于1时加速推理")
     parser.add_argument("--num-gpus", type=int, default=1, help="使用的GPU数量（默认1，设为-1使用所有可用GPU）")
+    parser.add_argument("--scheduling-mode", type=str, default="global", choices=["global", "legacy"], help="调度模式：global为跨episode全局并行，legacy为原始逐episode串行")
+    parser.add_argument("--global-build-workers", type=int, default=1, help="构建messages的线程数（global模式生效）")
+    parser.add_argument("--max-global-jobs", type=int, default=0, help="每次全局推理的最大job数（0表示一次性全部推理）")
     args = parser.parse_args()
     
     main(args)

@@ -50,23 +50,19 @@ def _infer_batch_on_gpu(args):
     Returns:
         List[Optional[int]]: 预测结果列表
     """
-    gpu_id, base_model_path, adapter_path, messages_list, max_new_tokens = args
-    print(f"gpu_id: {gpu_id}")
-    
-    # 设置 CUDA 设备 - 每个进程只看到分配给它的GPU
-    # 注意：必须在任何torch CUDA操作之前设置此环境变量
-    os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
+    gpu_id, base_model_path, adapter_path, messages_list, batch_size, max_new_tokens = args
+    print(f"[GPU {gpu_id}] worker 启动，样本数={len(messages_list)}")
 
-    # 验证设置是否生效
-    visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES")
-    print(f"[GPU {gpu_id}] CUDA_VISIBLE_DEVICES 设置为: {visible_devices}")
+    # 显式绑定到目标 GPU，避免多进程下 device_map="auto" 误分配到同一卡
+    torch.cuda.set_device(gpu_id)
+    device = f"cuda:{gpu_id}"
 
-    # 加载模型 - 让 device_map="auto" 自动处理单GPU分配
+    # 显式指定设备映射到当前 GPU
     base_model = AutoModelForImageTextToText.from_pretrained(
         base_model_path,
         dtype="auto",
         attn_implementation="flash_attention_2",
-        device_map="auto",  # 在单GPU环境下自动分配
+        device_map={"": device},
         trust_remote_code=True
     )
     
@@ -79,38 +75,40 @@ def _infer_batch_on_gpu(args):
         if processor.tokenizer.pad_token_id is None:
             processor.tokenizer.pad_token_id = processor.tokenizer.eos_token_id
     
-    # 批量推理
     results = []
     with torch.no_grad():
-        inputs = processor.apply_chat_template(
-            messages_list,
-            tokenize=True,
-            add_generation_prompt=True,
-            return_dict=True,
-            return_tensors="pt",
-            padding=True
-        )
-        inputs = inputs.to(model.device)
-        
-        generated_ids = model.generate(
-            **inputs,
-            max_new_tokens=max_new_tokens,
-            do_sample=False,
-            temperature=None,
-        )
-        
-        generated_ids_trimmed = [
-            out_ids[len(in_ids):] 
-            for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
-        ]
-        
-        output_texts = processor.batch_decode(
-            generated_ids_trimmed,
-            skip_special_tokens=True,
-            clean_up_tokenization_spaces=False
-        )
-        
-        results = [parse_delta_progress_int(text) for text in output_texts]
+        # 在每个 GPU worker 内继续按 batch_size 切分，避免显存峰值过高
+        for i in range(0, len(messages_list), batch_size):
+            sub_batch = messages_list[i:i + batch_size]
+            inputs = processor.apply_chat_template(
+                sub_batch,
+                tokenize=True,
+                add_generation_prompt=True,
+                return_dict=True,
+                return_tensors="pt",
+                padding=True
+            )
+            inputs = inputs.to(model.device)
+
+            generated_ids = model.generate(
+                **inputs,
+                max_new_tokens=max_new_tokens,
+                do_sample=False,
+                temperature=None,
+            )
+
+            generated_ids_trimmed = [
+                out_ids[len(in_ids):]
+                for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
+            ]
+
+            output_texts = processor.batch_decode(
+                generated_ids_trimmed,
+                skip_special_tokens=True,
+                clean_up_tokenization_spaces=False
+            )
+
+            results.extend([parse_delta_progress_int(text) for text in output_texts])
     
     return results
 
@@ -133,12 +131,19 @@ class MultiGPUDeltaProgressInference:
         self.adapter_path = adapter_path
         
         available_gpus = torch.cuda.device_count()
+        if available_gpus <= 0:
+            raise RuntimeError("未检测到可用 CUDA GPU，无法进行多 GPU 推理")
+
         if num_gpus is None or num_gpus == -1:
             self.num_gpus = available_gpus
         else:
             self.num_gpus = min(num_gpus, available_gpus)
-        
-        print(f"MultiGPU Inference 初始化完成，将使用 {self.num_gpus}/{available_gpus} 张 GPU")
+
+        self.gpu_ids = list(range(self.num_gpus))
+        print(
+            f"MultiGPU Inference 初始化完成，将使用 {self.num_gpus}/{available_gpus} 张 GPU，"
+            f"gpu_ids={self.gpu_ids}"
+        )
     
     def infer_from_messages_batch(
         self, 
@@ -173,12 +178,12 @@ class MultiGPUDeltaProgressInference:
         
         gpu_tasks = []
         start_idx = 0
-        for gpu_id in range(self.num_gpus):
+        for gpu_id in self.gpu_ids:
             # 分配任务，多余的给前面的 GPU
             end_idx = start_idx + tasks_per_gpu + (1 if gpu_id < remainder else 0)
             sublist = messages_list[start_idx:end_idx]
             if len(sublist) > 0:
-                gpu_tasks.append((gpu_id, self.base_model_path, self.adapter_path, sublist, max_new_tokens))
+                gpu_tasks.append((gpu_id, self.base_model_path, self.adapter_path, sublist, batch_size, max_new_tokens))
             start_idx = end_idx
         
         # 使用进程池并行处理
