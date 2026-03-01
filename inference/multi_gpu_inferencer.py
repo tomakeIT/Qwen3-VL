@@ -57,6 +57,7 @@ def _infer_batch_on_gpu(args):
     torch.cuda.set_device(gpu_id)
     device = f"cuda:{gpu_id}"
 
+    print(f"gpu {gpu_id}: loading base model...")
     # 显式指定设备映射到当前 GPU
     base_model = AutoModelForImageTextToText.from_pretrained(
         base_model_path,
@@ -79,6 +80,7 @@ def _infer_batch_on_gpu(args):
     with torch.no_grad():
         # 在每个 GPU worker 内继续按 batch_size 切分，避免显存峰值过高
         for i in range(0, len(messages_list), batch_size):
+            print(f"gpu {gpu_id}: inferring batch {i//batch_size +1}/{len(messages_list)//batch_size+1}...")
             sub_batch = messages_list[i:i + batch_size]
             inputs = processor.apply_chat_template(
                 sub_batch,

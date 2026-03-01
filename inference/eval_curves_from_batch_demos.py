@@ -260,30 +260,30 @@ def evaluate_curves(
     all_meta: List[Tuple[int, int]] = []
     all_messages: List[List[Dict[str, Any]]] = []
 
-    if effective_workers == 1:
-        iterator = tqdm(global_jobs, desc="构建messages")
-        for job in iterator:
-            episode_id, pair_idx, messages = _build_message_for_job(
-                job, task_desc, target_views, reference_config
-            )
+    # if effective_workers == 1:
+    #     iterator = tqdm(global_jobs, desc="构建messages")
+    #     for job in iterator:
+    #         episode_id, pair_idx, messages = _build_message_for_job(
+    #             job, task_desc, target_views, reference_config
+    #         )
+    #         all_meta.append((episode_id, pair_idx))
+    #         all_messages.append(messages)
+    # else:
+    with ThreadPoolExecutor(max_workers=effective_workers) as executor:
+        iterator = executor.map(
+            _build_message_for_job,
+            global_jobs,
+            [task_desc] * len(global_jobs),
+            [target_views] * len(global_jobs),
+            [reference_config] * len(global_jobs),
+        )
+        for episode_id, pair_idx, messages in tqdm(
+            iterator,
+            total=len(global_jobs),
+            desc="构建messages",
+        ):
             all_meta.append((episode_id, pair_idx))
             all_messages.append(messages)
-    else:
-        with ThreadPoolExecutor(max_workers=effective_workers) as executor:
-            iterator = executor.map(
-                _build_message_for_job,
-                global_jobs,
-                [task_desc] * len(global_jobs),
-                [target_views] * len(global_jobs),
-                [reference_config] * len(global_jobs),
-            )
-            for episode_id, pair_idx, messages in tqdm(
-                iterator,
-                total=len(global_jobs),
-                desc="构建messages",
-            ):
-                all_meta.append((episode_id, pair_idx))
-                all_messages.append(messages)
 
     all_predictions = inference.infer_from_messages_batch(
         all_messages,
