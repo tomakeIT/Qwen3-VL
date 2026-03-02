@@ -26,6 +26,7 @@ def main():
     parser.add_argument('--json', required=True, help='JSON data samples file')
     parser.add_argument('--base_dir', default="/home/lightwheel/erdao.liang/LightwheelData", help='Base directory for images')
     parser.add_argument('--output', default='frame_indices_stats.png', help='Output plot file')
+    parser.add_argument('--view_count', type=int, default=3, help='Number of views to consider. j takes last 1-view_count, i takes last (view_count+1)-(2*view_count). Default: 3')
     args = parser.parse_args()
 
     with open(args.json, 'r') as f:
@@ -38,13 +39,13 @@ def main():
 
     for sample in samples:
         images = sample['image']
-        if len(images) < 6:
+        if len(images) < 2 * args.view_count:
             continue
-        
-        # 倒数第1-3个是 j (frame_000020.png)
-        # 倒数第4-6个是 i (frame_000003.png)
-        # 从倒数第4个提取 i，倒数第1个提取 j
-        img_i = images[-4]  # 倒数第4个
+
+        # view_count=N 时：
+        # 倒数第1-N个是 j (取倒数第1个)
+        # 倒数第(N+1)-2N个是 i (取倒数第N+1个)
+        img_i = images[-(args.view_count + 1)]  # 倒数第(view_count+1)个
         img_j = images[-1]  # 倒数第1个
         
         i = extract_frame_num(img_i)

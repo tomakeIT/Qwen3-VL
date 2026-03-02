@@ -36,108 +36,108 @@ EXAMPLE_DATA = {
 
 # 4 tasks with negative samples
 L90L6PutTheWhiteMugOnThePlate = {
-        "annotation_path": "/home/lightwheel/erdao.liang/LightwheelData/dataset_1122/train/L90L6PutTheWhiteMugOnThePlate.json",
-        "data_path": "/home/lightwheel/erdao.liang/LightwheelData"
+        "annotation_path": "/home/erdao.liang/LightwheelData/dataset_1122/train/L90L6PutTheWhiteMugOnThePlate.json",
+        "data_path": "/home/erdao.liang/LightwheelData"
     }
 
 L10K8PutBothMokaPotsOnTheStove = {
-    "annotation_path": "/home/lightwheel/erdao.liang/LightwheelData/dataset_1122/train/L10K8PutBothMokaPotsOnTheStove.json",
-    "data_path": "/home/lightwheel/erdao.liang/LightwheelData"
+    "annotation_path": "/home/erdao.liang/LightwheelData/dataset_1122/train/L10K8PutBothMokaPotsOnTheStove.json",
+    "data_path": "/home/erdao.liang/LightwheelData"
 }
 
 L90K2StackTheMiddleBlackBowlOnTheBackBlackBowl = {
-    "annotation_path": "/home/lightwheel/erdao.liang/LightwheelData/dataset_1122/train/L90K2StackTheMiddleBlackBowlOnTheBackBlackBowl.json",
-    "data_path": "/home/lightwheel/erdao.liang/LightwheelData"
+    "annotation_path": "/home/erdao.liang/LightwheelData/dataset_1122/train/L90K2StackTheMiddleBlackBowlOnTheBackBlackBowl.json",
+    "data_path": "/home/erdao.liang/LightwheelData"
 }
 
 L90L3PickUpTheCreamCheeseAndPutItInTheTray = {
-    "annotation_path": "/home/lightwheel/erdao.liang/LightwheelData/dataset_1122/train/L90L3PickUpTheCreamCheeseAndPutItInTheTray.json",
-    "data_path": "/home/lightwheel/erdao.liang/LightwheelData"
+    "annotation_path": "/home/erdao.liang/LightwheelData/dataset_1122/train/L90L3PickUpTheCreamCheeseAndPutItInTheTray.json",
+    "data_path": "/home/erdao.liang/LightwheelData"
 }
 
 ExampleDataPickUpTheCube = {
-    "annotation_path": "/home/lightwheel/erdao.liang/LightwheelData/dataset_pickup_cube/train/GrabTheBlockAndLiftItUp.json",
-    "data_path": "/home/lightwheel/erdao.liang/LightwheelData",
+    "annotation_path": "/home/erdao.liang/LightwheelData/dataset_pickup_cube/train/GrabTheBlockAndLiftItUp.json",
+    "data_path": "/home/erdao.liang/LightwheelData",
 }
 
 LSPickUpBlackBowlBetweenPlateAndRamekinAndPlaceItOnPlate = {
-    "annotation_path": "/home/lightwheel/erdao.liang/LightwheelData/lerobot_old/train/LSPickUpBlackBowlBetweenPlateAndRamekinAndPlaceItOnPlate.json",
-    "data_path": "/home/lightwheel/erdao.liang/LightwheelData/lerobot_old",
+    "annotation_path": "/home/erdao.liang/LightwheelData/lerobot_old/train/LSPickUpBlackBowlBetweenPlateAndRamekinAndPlaceItOnPlate.json",
+    "data_path": "/home/erdao.liang/LightwheelData/lerobot_old",
 }
 
 PickCoffeeMug = {
-    "annotation_path": "/home/lightwheel/erdao.liang/LightwheelData/lerobot_old/train/PickCoffeeMug.json",
-    "data_path": "/home/lightwheel/erdao.liang/LightwheelData/lerobot_old",
+    "annotation_path": "/home/erdao.liang/LightwheelData/lerobot_old/train/PickCoffeeMug.json",
+    "data_path": "/home/erdao.liang/LightwheelData/lerobot_old",
 }
 
 ArrangeVegetables = {
-    "annotation_path": "/home/lightwheel/erdao.liang/LightwheelData/slowdata/data_1W_Robocasa_X7s/train/ArrangeVegetables.json",
-    "data_path": "/home/lightwheel/erdao.liang/LightwheelData/slowdata/",
+    "annotation_path": "/home/erdao.liang/LightwheelData/slowdata/data_1W_Robocasa_X7s_new/train/ArrangeVegetables.json",
+    "data_path": "/home/erdao.liang/LightwheelData/slowdata/",
 }
 
 BreadAndCheese = {
-    "annotation_path": "/home/lightwheel/erdao.liang/LightwheelData/slowdata/data_1W_Robocasa_X7s/train/BreadAndCheese.json",
-    "data_path": "/home/lightwheel/erdao.liang/LightwheelData/slowdata/",
+    "annotation_path": "/home/erdao.liang/LightwheelData/slowdata/data_1W_Robocasa_X7s/train/BreadAndCheese.json",
+    "data_path": "/home/erdao.liang/LightwheelData/slowdata/",
 }
 
 BreadSetupSlicing = {
-    "annotation_path": "/home/lightwheel/erdao.liang/LightwheelData/slowdata/data_1W_Robocasa_X7s/train/BreadSetupSlicing.json",
-    "data_path": "/home/lightwheel/erdao.liang/LightwheelData/slowdata/",
+    "annotation_path": "/home/erdao.liang/LightwheelData/slowdata/data_1W_Robocasa_X7s/train/BreadSetupSlicing.json",
+    "data_path": "/home/erdao.liang/LightwheelData/slowdata/",
 }
 
 CheesyBread = {
-    "annotation_path": "/home/lightwheel/erdao.liang/LightwheelData/slowdata/data_1W_Robocasa_X7s/train/CheesyBread.json",
-    "data_path": "/home/lightwheel/erdao.liang/LightwheelData/slowdata/",
+    "annotation_path": "/home/erdao.liang/LightwheelData/slowdata/data_1W_Robocasa_X7s/train/CheesyBread.json",
+    "data_path": "/home/erdao.liang/LightwheelData/slowdata/",
 }
 
 CloseDishwasher = {
-    "annotation_path": "/home/lightwheel/erdao.liang/LightwheelData/slowdata/data_1W_Robocasa_X7s/train/CloseDishwasher.json",
-    "data_path": "/home/lightwheel/erdao.liang/LightwheelData/slowdata/",
+    "annotation_path": "/home/erdao.liang/LightwheelData/slowdata/data_1W_Robocasa_X7s/train/CloseDishwasher.json",
+    "data_path": "/home/erdao.liang/LightwheelData/slowdata/",
 }
 
 CloseDrawer = {
-    "annotation_path": "/home/lightwheel/erdao.liang/LightwheelData/slowdata/data_1W_Robocasa_X7s/train/CloseDrawer.json",
-    "data_path": "/home/lightwheel/erdao.liang/LightwheelData/slowdata/",
+    "annotation_path": "/home/erdao.liang/LightwheelData/slowdata/data_1W_Robocasa_X7s/train/CloseDrawer.json",
+    "data_path": "/home/erdao.liang/LightwheelData/slowdata/",
 }
 
 CloseFridge = {
-    "annotation_path": "/home/lightwheel/erdao.liang/LightwheelData/slowdata/data_1W_Robocasa_X7s/train/CloseFridge.json",
-    "data_path": "/home/lightwheel/erdao.liang/LightwheelData/slowdata/",
+    "annotation_path": "/home/erdao.liang/LightwheelData/slowdata/data_1W_Robocasa_X7s/train/CloseFridge.json",
+    "data_path": "/home/erdao.liang/LightwheelData/slowdata/",
 }
 
 CloseMicrowave = {
-    "annotation_path": "/home/lightwheel/erdao.liang/LightwheelData/slowdata/data_1W_Robocasa_X7s/train/CloseMicrowave.json",
-    "data_path": "/home/lightwheel/erdao.liang/LightwheelData/slowdata/",
+    "annotation_path": "/home/erdao.liang/LightwheelData/slowdata/data_1W_Robocasa_X7s/train/CloseMicrowave.json",
+    "data_path": "/home/erdao.liang/LightwheelData/slowdata/",
 }
 
 CoffeeServeMug = {
-    "annotation_path": "/home/lightwheel/erdao.liang/LightwheelData/slowdata/data_1W_Robocasa_X7s/train/CoffeeServeMug.json",
-    "data_path": "/home/lightwheel/erdao.liang/LightwheelData/slowdata/",
+    "annotation_path": "/home/erdao.liang/LightwheelData/slowdata/data_1W_Robocasa_X7s/train/CoffeeServeMug.json",
+    "data_path": "/home/erdao.liang/LightwheelData/slowdata/",
 }
 
 CoffeeSetupMug = {
-    "annotation_path": "/home/lightwheel/erdao.liang/LightwheelData/slowdata/data_1W_Robocasa_X7s/train/CoffeeSetupMug.json",
-    "data_path": "/home/lightwheel/erdao.liang/LightwheelData/slowdata/",
+    "annotation_path": "/home/erdao.liang/LightwheelData/slowdata/data_1W_Robocasa_X7s/train/CoffeeSetupMug.json",
+    "data_path": "/home/erdao.liang/LightwheelData/slowdata/",
 }
 
 OpenDishwasher = {
-    "annotation_path": "/home/lightwheel/erdao.liang/LightwheelData/slowdata/data_1W_Robocasa_X7s/train/OpenDishwasher.json",
-    "data_path": "/home/lightwheel/erdao.liang/LightwheelData/slowdata/",
+    "annotation_path": "/home/erdao.liang/LightwheelData/slowdata/data_1W_Robocasa_X7s/train/OpenDishwasher.json",
+    "data_path": "/home/erdao.liang/LightwheelData/slowdata/",
 }
 
 OpenDrawer = {
-    "annotation_path": "/home/lightwheel/erdao.liang/LightwheelData/slowdata/data_1W_Robocasa_X7s/train/OpenDrawer.json",
-    "data_path": "/home/lightwheel/erdao.liang/LightwheelData/slowdata/",
+    "annotation_path": "/home/erdao.liang/LightwheelData/slowdata/data_1W_Robocasa_X7s/train/OpenDrawer.json",
+    "data_path": "/home/erdao.liang/LightwheelData/slowdata/",
 }
 
 OpenFridge = {
-    "annotation_path": "/home/lightwheel/erdao.liang/LightwheelData/slowdata/data_1W_Robocasa_X7s/train/OpenFridge.json",
-    "data_path": "/home/lightwheel/erdao.liang/LightwheelData/slowdata/",
+    "annotation_path": "/home/erdao.liang/LightwheelData/slowdata/data_1W_Robocasa_X7s/train/OpenFridge.json",
+    "data_path": "/home/erdao.liang/LightwheelData/slowdata/",
 }
 
 OpenMicrowave = {
-    "annotation_path": "/home/lightwheel/erdao.liang/LightwheelData/slowdata/data_1W_Robocasa_X7s/train/OpenMicrowave.json",
-    "data_path": "/home/lightwheel/erdao.liang/LightwheelData/slowdata/",
+    "annotation_path": "/home/erdao.liang/LightwheelData/slowdata/data_1W_Robocasa_X7s/train/OpenMicrowave.json",
+    "data_path": "/home/erdao.liang/LightwheelData/slowdata/",
 }
 
 

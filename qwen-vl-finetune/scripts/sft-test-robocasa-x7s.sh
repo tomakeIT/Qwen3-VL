@@ -13,33 +13,33 @@
 MASTER_ADDR=${MASTER_ADDR:-"127.0.0.1"}
 MASTER_PORT=${MASTER_PORT:-$(shuf -i 20001-29999 -n 1)}
 NNODES=${WORLD_SIZE:-1}
-NPROC_PER_NODE=${NPROC_PER_NODE:-8}
-CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0,1,2,3,4,5,6,7}
+NPROC_PER_NODE=${NPROC_PER_NODE:-7}
+CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0,1,2,3,5,6,7}
 
 # DeepSpeed configuration
 deepspeed=./scripts/zero2.json
 
 # Model configuration
-model_path=/home/lightwheel/erdao.liang/Qwen3-VL/models/Qwen-VL-2B-Instruct # Using HuggingFace model ID
+model_path=/home/erdao.liang/Qwen3-VL/models/Qwen-VL-2B-Instruct # Using HuggingFace model ID
 
 # Training hyperparameters
-lr=1e-4
-batch_size=8
-grad_accum_steps=32
+lr=5e-4
+batch_size=16
+grad_accum_steps=8
 model_max_length=2048
-num_train_epochs=300
+num_train_epochs=100
 # Training entry point
 entry_file=qwenvl/train/train_qwen.py
 
 # Dataset configuration (replace with public dataset names)
-datasets=robocasa_x7s_arrange_vegetables,robocasa_x7s_bread_and_cheese,robocasa_x7s_bread_setup_slicing,robocasa_x7s_cheesy_bread,robocasa_x7s_close_dishwasher,robocasa_x7s_close_drawer,robocasa_x7s_close_fridge,robocasa_x7s_close_microwave,robocasa_x7s_coffee_serve_mug,robocasa_x7s_coffee_setup_mug,robocasa_x7s_open_dishwasher,robocasa_x7s_open_drawer,robocasa_x7s_open_fridge,robocasa_x7s_open_microwave
+datasets=robocasa_x7s_arrange_vegetables
 
 # wandb run
-run_name="lerobot_Robocasa_X7s_A40"
+run_name="lerobot_Robocasa_X7s_H800_arange_veg_lora_newdata"
 
 
 # checkpoint saving
-output_dir=./output
+output_dir=./output/lerobot_Robocasa_X7s_H800_arange_veg_lora_newdata
 save_total_limit=10
 save_steps=1000
 
@@ -76,11 +76,18 @@ args="
     --logging_steps 1 \
     --model_max_length ${model_max_length} \
     --gradient_checkpointing True \
-    --dataloader_num_workers 4 \
+    --dataloader_num_workers 12 \
+    --dataloader_prefetch_factor 2 \
+    --dataloader_persistent_workers True \
     --run_name ${run_name} \
     --report_to wandb"
 
 # Launch training
+
+
+NCCL_NVLS_ENABLE=0 \
+NCCL_IB_DISABLE=1 \
+CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES} \
 torchrun --nproc_per_node=${NPROC_PER_NODE} \
          --master_addr=${MASTER_ADDR} \
          --master_port=${MASTER_PORT} \
