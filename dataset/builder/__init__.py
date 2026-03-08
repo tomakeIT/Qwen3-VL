@@ -20,8 +20,8 @@ Example usage:
     )
 
     # Save metadata
-    save_split_metadata(config.train_output_dir, "train", train_info)
-    save_split_metadata(config.eval_output_dir, "eval", eval_info)
+    save_split_metadata(config.output_dir, "train", train_info)
+    save_split_metadata(config.output_dir, "eval", eval_info)
 """
 
 from .core import DatasetBuilder

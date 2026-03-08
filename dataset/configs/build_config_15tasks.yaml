@@ -1,8 +1,7 @@
 
 # 数据路径配置
 root: "/home/erdao.liang/LightwheelData/slowdata/1W_Robocasa_X7s_More/"  # 数据集根目录
-train_output_dir: "/home/erdao.liang/LightwheelData/data_1W_Robocasa_X7_new/train"  # 训练集输出目录
-eval_output_dir: "/home/erdao.liang/LightwheelData/data_1W_Robocasa_X7_new/eval"     # 验证集输出目录
+output_dir: "/home/erdao.liang/LightwheelData/data_1W_Robocasa_X7s_new/"  # 输出根目录（样本写入 train/eval，metadata 写在根目录）
 
 # 采样参数
 sampling:
@@ -41,7 +40,12 @@ split:
   train_ratio: 0.7            # 训练集比例
   min_demos_per_task: 2        # 每个任务最少需要的 demo 数量
   selected_tasks:               # 选择要处理的任务：null 表示处理所有任务，或指定任务名称列表，例如: ["task1", "task2"]
-  - ArrangeVegetables          
+  - ArrangeVegetables
+  - CheesyBread
+  - CoffeeSetupMug
+  - CloseDishwasher
+  - CloseDrawer
+  - OpenDishwasher
   use_q1_q3_only: true         # 是否只使用帧数在 Q1-Q3 范围内的 episodes（过滤掉太短/太长的异常 episode）
 
 

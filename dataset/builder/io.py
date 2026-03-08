@@ -11,7 +11,8 @@ logger = logging.getLogger(__name__)
 def save_split_metadata(
     output_dir: str,
     split_name: str,
-    task_samples_info: Dict[str, Any]
+    task_samples_info: Dict[str, Any],
+    data_path: str = "",
 ) -> str:
     """Save metadata about the generated samples.
 
@@ -19,6 +20,7 @@ def save_split_metadata(
         output_dir: Directory to save metadata
         split_name: 'train' or 'eval'
         task_samples_info: Dict with task_name -> {episodes, sample_count, ...}
+        data_path: Base path used to resolve relative image paths at training time
 
     Returns:
         Path to the saved metadata file
@@ -31,6 +33,7 @@ def save_split_metadata(
 
     metadata = {
         "split": split_name,
+        "data_path": data_path,
         "total_samples": total_samples,
         "total_episodes": total_episodes,
         "total_tasks": len(task_samples_info),

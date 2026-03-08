@@ -13,8 +13,8 @@
 MASTER_ADDR=${MASTER_ADDR:-"127.0.0.1"}
 MASTER_PORT=${MASTER_PORT:-$(shuf -i 20001-29999 -n 1)}
 NNODES=${WORLD_SIZE:-1}
-NPROC_PER_NODE=${NPROC_PER_NODE:-7}
-CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0,1,2,3,5,6,7}
+NPROC_PER_NODE=${NPROC_PER_NODE:-4}
+CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0,1,2,3}
 
 # DeepSpeed configuration
 deepspeed=./scripts/zero2.json
@@ -31,15 +31,17 @@ num_train_epochs=100
 # Training entry point
 entry_file=qwenvl/train/train_qwen.py
 
-# Dataset configuration (replace with public dataset names)
-datasets=robocasa_x7s_arrange_vegetables
+# Dataset configuration (path-based):
+# 1) all tasks: /path/to/dataset_root
+# 2) selected tasks in same root: /path/to/dataset_root::TaskA+TaskB
+datasets=/home/erdao.liang/LightwheelData/data_1W_Robocasa_X7s_new::ArrangeVegetables
 
 # wandb run
-run_name="lerobot_Robocasa_X7s_H800_arange_veg_lora_newdata"
+run_name="lerobot_Robocasa_X7s_H800_arangeveg_lora_newdata_newnew"
 
 
 # checkpoint saving
-output_dir=./output/lerobot_Robocasa_X7s_H800_arange_veg_lora_newdata
+output_dir=./output/lerobot_Robocasa_X7s_H800_arange_veg_lora_newdata_justtest
 save_total_limit=10
 save_steps=1000
 
@@ -49,7 +51,7 @@ export WANDB_PROJECT="qwen3vl-rewardmodel"
 # Training arguments
 args="
     --deepspeed ${deepspeed} \
-    --model_name_or_path "${model_path}" \
+    --model_name_or_path ${model_path} \
     --dataset_use ${datasets} \
     --data_flatten True \
     --tune_mm_vision False \

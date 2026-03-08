@@ -4,9 +4,8 @@ Supports both task-level and demo-level parallelism to maximize speed.
 """
 
 import os
-import random
 import logging
-from typing import Dict, Any, List, Tuple, Optional
+from typing import Dict, Any, List, Tuple
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from types import SimpleNamespace
 
@@ -81,7 +80,7 @@ def process_task_with_demo_parallelism(
 
     # Prepare work items for train demos
     train_work_items = []
-    for idx, demo_name in enumerate(train_demos):
+    for demo_name in train_demos:
         seed_offset = base_seed + hash(f"{task_name}_{demo_name}_train") % 100000
         train_work_items.append((
             config.root, task_name, demo_name, task_desc, all_task_names,
@@ -91,7 +90,7 @@ def process_task_with_demo_parallelism(
 
     # Prepare work items for eval demos
     eval_work_items = []
-    for idx, demo_name in enumerate(eval_demos):
+    for demo_name in eval_demos:
         seed_offset = base_seed + hash(f"{task_name}_{demo_name}_eval") % 100000
         eval_work_items.append((
             config.root, task_name, demo_name, task_desc, all_task_names,
@@ -108,7 +107,7 @@ def process_task_with_demo_parallelism(
             futures = {executor.submit(_process_demo_worker, item): item for item in train_work_items}
 
             for future in as_completed(futures):
-                task_name_ret, demo_name, samples = future.result()
+                _, demo_name, samples = future.result()
                 train_samples.extend(samples)
                 logger.debug(f"  {task_name}/{demo_name} (train): generated {len(samples)} samples")
 
@@ -118,7 +117,7 @@ def process_task_with_demo_parallelism(
             futures = {executor.submit(_process_demo_worker, item): item for item in eval_work_items}
 
             for future in as_completed(futures):
-                task_name_ret, demo_name, samples = future.result()
+                _, demo_name, samples = future.result()
                 eval_samples.extend(samples)
                 logger.debug(f"  {task_name}/{demo_name} (eval): generated {len(samples)} samples")
 
@@ -162,9 +161,10 @@ def process_all_tasks(
     train_task_info: Dict[str, Any] = {}
     eval_task_info: Dict[str, Any] = {}
 
-    os.makedirs(config.train_output_dir, exist_ok=True)
-    if config.eval_output_dir:
-        os.makedirs(config.eval_output_dir, exist_ok=True)
+    train_output_dir = os.path.join(config.output_dir, "train")
+    eval_output_dir = os.path.join(config.output_dir, "eval")
+    os.makedirs(train_output_dir, exist_ok=True)
+    os.makedirs(eval_output_dir, exist_ok=True)
 
     total_tasks = len(train_tasks)
     logger.info(f"Processing {total_tasks} tasks with demo-level parallelism (workers={num_workers})")
@@ -189,12 +189,12 @@ def process_all_tasks(
 
         # Save train samples immediately
         if train_samples:
-            save_task_samples(config.train_output_dir, task_name, "train", train_samples)
+            save_task_samples(train_output_dir, task_name, "train", train_samples)
             train_task_info[task_name] = train_metadata
 
         # Save eval samples immediately
-        if eval_samples and config.eval_output_dir:
-            save_task_samples(config.eval_output_dir, task_name, "eval", eval_samples)
+        if eval_samples:
+            save_task_samples(eval_output_dir, task_name, "eval", eval_samples)
             eval_task_info[task_name] = eval_metadata
 
     return train_task_info, eval_task_info

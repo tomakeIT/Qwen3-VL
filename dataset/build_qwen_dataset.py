@@ -14,7 +14,6 @@ import random
 import argparse
 import logging
 import yaml
-from types import SimpleNamespace
 
 # Add parent directory (Qwen3-VL root) to path to import utils and builder modules
 script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -49,15 +48,21 @@ def main(args: argparse.Namespace) -> None:
     if args.root:
         config_dict["root"] = args.root
 
+    output_dir = config_dict.get("output_dir")
+    if not output_dir:
+        raise ValueError("Missing required config key: `output_dir`.")
+    config_dict["output_dir"] = os.path.abspath(output_dir)
+
     config = dict_to_namespace(config_dict)
     random.seed(config.seed)
+    data_path = os.path.dirname(os.path.abspath(config.root))
 
     # Load task descriptions
     task_desc_map = load_task_descriptions(config.root)
 
     # Initialize builder and split tasks
     builder = DatasetBuilder(config)
-    train_tasks, eval_tasks, all_task_stats = builder.split_tasks(task_desc_map)
+    train_tasks, eval_tasks, _ = builder.split_tasks(task_desc_map)
 
     total_tasks = len(train_tasks)
     if total_tasks == 0:
@@ -82,17 +87,28 @@ def main(args: argparse.Namespace) -> None:
 
     # Save aggregated metadata
     if train_task_info:
-        save_split_metadata(config.train_output_dir, "train", train_task_info)
+        save_split_metadata(
+            config.output_dir,
+            "train",
+            train_task_info,
+            data_path=data_path,
+        )
 
-    if eval_task_info and config.eval_output_dir:
-        save_split_metadata(config.eval_output_dir, "eval", eval_task_info)
+    if eval_task_info:
+        save_split_metadata(
+            config.output_dir,
+            "eval",
+            eval_task_info,
+            data_path=data_path,
+        )
 
     logger.info("=" * 60)
     logger.info("Dataset building completed!")
     logger.info(f"Train tasks: {len(train_task_info)}")
     logger.info(f"Eval tasks: {len(eval_task_info)}")
-    logger.info(f"Train output: {config.train_output_dir}")
-    logger.info(f"Eval output: {config.eval_output_dir}")
+    logger.info(f"Train output: {os.path.join(config.output_dir, 'train')}")
+    logger.info(f"Eval output: {os.path.join(config.output_dir, 'eval')}")
+    logger.info(f"Metadata output root: {config.output_dir}")
 
 
 if __name__ == "__main__":

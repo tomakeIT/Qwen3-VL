@@ -247,7 +247,9 @@ class LazySupervisedDataset(Dataset):
     def __init__(self, processor, data_args):
         super(LazySupervisedDataset, self).__init__()
 
-        dataset = data_args.dataset_use.split(",")
+        dataset = [item.strip() for item in data_args.dataset_use.split(",") if item.strip()]
+        if not dataset:
+            raise ValueError("`dataset_use` is empty. Please provide dataset path(s).")
         dataset_list = data_list(dataset)
         rank0_print(f"Loading datasets: {dataset_list}")
         self.video_max_total_pixels = getattr(

@@ -158,56 +158,58 @@ Some examples are shown in `demo/single_images.json` and `demo/video.json` and t
 
 ### Dataset config for training
 
-To add or modify datasets for training, follow these steps:
+`--dataset_use` now accepts dataset paths directly. No manual registration in `data/__init__.py` is required.
 
-### Dataset Definition Structure
+### Supported input formats
 
-1. **Create a dataset dictionary** in the format in the file `data/__init__.py`:
-```python
-DATASET_NAME = {
-    "annotation_path": "/path/to/annotations.json",
-    "data_path": "/path/to/image/data",  # Can be empty if paths are in annotations
-}
+1. **Dataset output root** (recommended):
+```bash
+/path/to/dataset_output_root
 ```
-
-2. **Register your dataset** by adding it to the `data_dict`:
-```python
-data_dict = {
-    "your_dataset_name": DATASET_NAME,
-    # ... other datasets
-}
+Expected layout:
+```text
+dataset_output_root/
+  train/*.json
+  eval/*.json
 ```
+Training will automatically load `train/*.json`.
+
+You can also select specific tasks from the same root:
+```bash
+/path/to/dataset_output_root::ArrangeVegetables+OpenDrawer
+```
+Task names are JSON file stems under `train/` (without `.json`).
+
+2. **Split directory**:
+```bash
+/path/to/dataset_output_root/train
+```
+Training will load all `*.json` / `*.jsonl` files in this directory.
+
+3. **Single annotation file**:
+```bash
+/path/to/dataset_output_root/train/TaskName.json
+```
+Training will load only this file.
 
 ### Sampling Rate Control
 
-You can optionally specify sampling rates by appending `%X` to the dataset name:
-- `"dataset_name%50"` will sample 50% of the data
-- `"dataset_name%20"` will sample 20% of the data
+You can optionally specify sampling rates by appending `%X` to each dataset path:
+- `"/path/to/dataset_output_root%50"` will sample 50% of that dataset
+- `"/path/to/dataset_output_root/train%20"` will sample 20% of that split
+- `"/path/to/dataset_output_root::ArrangeVegetables+OpenDrawer%30"` will sample 30% after task filtering
 
 ### Usage Example
 
-1. Define your dataset:
+Use it in training:
 ```python
-MY_DATASET = {
-    "annotation_path": "/data/my_dataset/annotations.json",
-    "data_path": "/data/my_dataset/images/",
-}
-
-data_dict = {
-    "my_dataset": MY_DATASET,
-    "cambrian_737k": CAMBRIAN_737K,  # existing dataset
-}
-```
-
-2. Use it in training:
-```python
-dataset_names = ["my_dataset%50"]  # Will use 50% of your dataset
+dataset_names = ["/data/my_dataset_output_root%50"]  # Will use 50% of this dataset
 configs = data_list(dataset_names)
 ```
 
 ### Notes  
 - The `annotation_path` should point to a JSON or JSONL file containing your dataset annotations.  
-- The `data_path` can be left empty if the image paths in the annotations are absolute.  
+- For generated datasets with relative image paths, metadata must include `data_path` in `train_metadata.json` / `eval_metadata.json` at dataset root (written by the updated builder).  
 - Sampling rates are applied per-dataset when multiple datasets are specified.  
 - Some datasets you can use directly: `nyu-visionx/Cambrian-10M`, `lmms-lab/LLaVA-NeXT-Data`, `FreedomIntelligence/ALLaVA-4V`, `TIGER-Lab/VisualWebInstruct`.  
 - The training data should strictly follow this format:  
@@ -242,7 +244,7 @@ CACHE_DIR="./cache"                          # [TrainingArguments] Cache directo
 # ======================
 # Model Configuration
 # ======================
-DATASETS="your_dataset%100"                  # [DataArguments] Dataset with sampling rate
+DATASETS="/path/to/dataset_output_root%100"  # [DataArguments] Dataset path with sampling rate
 
 # ======================
 # Training Hyperparameters

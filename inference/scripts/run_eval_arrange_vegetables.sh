@@ -10,19 +10,19 @@ BASE_MODEL="models/Qwen-VL-2B-Instruct"
 
 # LoRA 适配器路径（请修改为你训练好的模型路径）
 # 示例: ADAPTER="qwen-vl-finetune/output/checkpoint-10000"
-ADAPTER=/home/lightwheel/erdao.liang/LightwheelData/slowdata/checkpoint-9000
+ADAPTER=/home/erdao.liang/Qwen3-VL/qwen-vl-finetune/output/lerobot_Robocasa_X7s_H800_arange_veg_lora_newdata/checkpoint-900
 
 # demo list JSON 文件路径（包含要评估的验证集 demo 列表）
-DEMO_LIST="inference/demo_list_arrange_vegetables_eval.json"
+DEMO_LIST="inference/data/demo_list_arrange_vegetables_eval_2.json"
 
 # reference demo 路径（从训练集中选一个作为 reference）
-REFERENCE_DEMO="/home/lightwheel/erdao.liang/LightwheelData/slowdata/1W_Robocasa_X7s_More/ArrangeVegetables/ArrangeVegetables_1762240854119666"
+REFERENCE_DEMO="/home/erdao.liang/LightwheelData/slowdata/1W_Robocasa_X7s_More/ArrangeVegetables/ArrangeVegetables_1762240854119666"
 
 # 任务描述
 TASK_DESC="Put the vegetables on the cutting board"
 
 # YAML 配置文件路径（包含视角配置等）
-CONFIG="dataset/build_config_15tasks.yaml"
+CONFIG="dataset/configs/build_config_15tasks.yaml"
 
 # 采样间隔（每隔多少帧采样一次）
 STEP_INTERVAL=2
@@ -32,13 +32,16 @@ START_FRAME=0
 # END_FRAME=100  # 如果不设置，默认到最后一帧
 
 # Batch大小（大于1时使用batch推理加速）
-BATCH_SIZE=8
+BATCH_SIZE=32
 
 # 输出结果保存路径
-OUTPUT="outputs/eval_arrange_vegetables_results.json"
+OUTPUT="outputs/eval_arrange_vegetables_results_3.json"
 
 # 曲线图保存路径
-PLOT_OUTPUT="outputs/eval_arrange_vegetables_curves.png"
+PLOT_OUTPUT="outputs/eval_arrange_vegetables_curves_3.png"
+
+# 使用的GPU数量
+NUM_GPUS=4
 
 # ============================================================================
 
@@ -60,7 +63,8 @@ python3 inference/eval_curves_from_batch_demos.py \
     --start-frame "$START_FRAME" \
     --batch-size "$BATCH_SIZE" \
     --output "$OUTPUT" \
-    --plot-output "$PLOT_OUTPUT"
+    --plot-output "$PLOT_OUTPUT" \
+    --num-gpus "$NUM_GPUS"
 
 echo ""
 echo "=========================================="
