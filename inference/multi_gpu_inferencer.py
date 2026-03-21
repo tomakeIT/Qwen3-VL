@@ -20,7 +20,6 @@ def _load_model_and_processor(gpu_id: int, base_model_path: str, adapter_path: s
     torch.cuda.set_device(gpu_id)
     device = f"cuda:{gpu_id}"
 
-    print(f"[GPU {gpu_id}] 正在加载模型...")
     base_model = AutoModelForImageTextToText.from_pretrained(
         base_model_path,
         dtype="auto",
@@ -38,7 +37,6 @@ def _load_model_and_processor(gpu_id: int, base_model_path: str, adapter_path: s
         if processor.tokenizer.pad_token_id is None:
             processor.tokenizer.pad_token_id = processor.tokenizer.eos_token_id
 
-    print(f"[GPU {gpu_id}] 模型加载完成！")
     return model, processor
 
 
@@ -52,11 +50,8 @@ def _run_inference_batches(
 ) -> List[Optional[int]]:
     """对单个 worker 分到的 messages 做分批推理。"""
     results = []
-    total_batches = (len(messages_list) + batch_size - 1) // batch_size
     with torch.no_grad():
-        for batch_idx, i in enumerate(range(0, len(messages_list), batch_size), start=1):
-            if gpu_id is not None:
-                print(f"gpu {gpu_id}: inferring batch {batch_idx}/{total_batches}...")
+        for i in range(0, len(messages_list), batch_size):
             sub_batch = messages_list[i:i + batch_size]
             inputs = processor.apply_chat_template(
                 sub_batch,
@@ -160,10 +155,7 @@ class MultiGPUDeltaProgressInference:
             self.num_gpus = min(num_gpus, available_gpus)
 
         self.gpu_ids = list(range(self.num_gpus))
-        print(
-            f"MultiGPU Inference 初始化完成，将使用 {self.num_gpus}/{available_gpus} 张 GPU，"
-            f"gpu_ids={self.gpu_ids}"
-        )
+        print(f"[multi_gpu] using {self.num_gpus}/{available_gpus} GPUs")
         if self.num_gpus > 1:
             self._start_workers()
         atexit.register(self.close)
@@ -211,8 +203,6 @@ class MultiGPUDeltaProgressInference:
         Returns:
             List[Optional[int]]: 所有预测结果（保持输入顺序）
         """
-        print(f"messages_list length: {len(messages_list)}")
-        print(f"batch_size: {batch_size}")
         if len(messages_list) == 0:
             return []
 
@@ -277,7 +267,7 @@ class MultiGPUDeltaProgressInference:
         desc: str
     ) -> List[Optional[int]]:
         """单 GPU 推理（退化为原来的 DeltaProgressInference）"""
-        from inferencer import DeltaProgressInference
+        from inference.inferencer import DeltaProgressInference
 
         if self._single_gpu_inference is None:
             self._single_gpu_inference = DeltaProgressInference(self.base_model_path, self.adapter_path)

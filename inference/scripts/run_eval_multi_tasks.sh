@@ -30,7 +30,7 @@ OUTPUT_ROOT="outputs/eval_multi_tasks_from_metadata"
 
 # ==================================================
 
-python3 inference/eval_curves_multi_tasks.py \
+python3 -m inference.eval_tasks \
   --base-model "${BASE_MODEL}" \
   --adapter "${ADAPTER}" \
   --processed-meta-root "${PROCESSED_META_ROOT}" \

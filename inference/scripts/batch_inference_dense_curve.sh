@@ -43,7 +43,7 @@ for demo_dir in "$DEMOS_DIR"/*; do
     echo "=========================================="
     
     # 运行推理脚本
-    if python3 inference/inference_dense_curve_from_demo.py \
+    if python3 -m inference.dense_curve_demo \
         --base-model "$BASE_MODEL" \
         --adapter "$ADAPTER" \
         --target-demo "$demo_dir" \

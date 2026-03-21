@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # 评估 ArrangeVegetables 任务在验证集上的效果
-# 使用 eval_curves_from_batch_demos.py 批量推理 progress curves
+# 使用 `python -m inference.eval_curves` 批量推理 progress curves
 
 # ==================== 配置区域（请根据你的实际情况修改）====================
 
@@ -52,7 +52,7 @@ echo "模型: $ADAPTER"
 echo "评估demo数量: $(python3 -c "import json; data=json.load(open('$DEMO_LIST')); print(len(data.get('eval', {})))")"
 echo ""
 
-python3 inference/eval_curves_from_batch_demos.py \
+python3 -m inference.eval_curves \
     --base-model "$BASE_MODEL" \
     --adapter "$ADAPTER" \
     --demo-list "$DEMO_LIST" \

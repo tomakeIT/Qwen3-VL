@@ -15,7 +15,7 @@ class DeltaProgressInference:
     
     def __init__(self, base_model_path: str, adapter_path: str):
         """初始化模型和处理器"""
-        print("正在加载基础模型...")
+        print("[single_gpu] loading model")
         base_model = AutoModelForImageTextToText.from_pretrained(
             base_model_path,
             dtype="auto",
@@ -24,11 +24,9 @@ class DeltaProgressInference:
             trust_remote_code=True
         )
         
-        print("正在加载LoRA适配器...")
         self.model = PeftModel.from_pretrained(base_model, adapter_path)
         self.model.eval()
         
-        print("正在加载处理器...")
         self.processor = AutoProcessor.from_pretrained(base_model_path, trust_remote_code=True)
         # 对于decoder-only架构，需要设置左填充以确保生成结果正确
         if hasattr(self.processor, 'tokenizer') and self.processor.tokenizer is not None:
@@ -36,7 +34,7 @@ class DeltaProgressInference:
             # 确保pad_token_id已设置（如果未设置，使用eos_token_id）
             if self.processor.tokenizer.pad_token_id is None:
                 self.processor.tokenizer.pad_token_id = self.processor.tokenizer.eos_token_id
-        print("模型加载完成！")
+        print("[single_gpu] ready")
     
     
     def infer_from_messages(self, messages: List[Dict[str, Any]], max_new_tokens: int = 128) -> Optional[int]:

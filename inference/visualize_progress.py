@@ -6,8 +6,8 @@ from typing import Any, Dict, List, Sequence, Tuple
 
 import numpy as np
 
-from common.io_utils import load_jsonl_rows
-from common.metrics import (
+from inference.io_utils import load_jsonl_rows
+from inference.metrics import (
     calc_monotonicity_rate,
     calc_total_variation,
     compute_ground_truth_dense_curve,
@@ -15,7 +15,7 @@ from common.metrics import (
     reconstruct_dense_progress,
     spearman_correlation,
 )
-from common.viz_utils import (
+from inference.viz_utils import (
     build_summary_payload as build_viz_summary_payload,
     group_items_by,
     resolve_default_output_dir,
@@ -40,17 +40,6 @@ class EpisodeCurve:
     dense_frames: np.ndarray
     dense_progress: np.ndarray
     dense_progress_gt: np.ndarray
-
-
-def load_jsonl_rows(path: str) -> List[Dict[str, Any]]:
-    rows: List[Dict[str, Any]] = []
-    with open(path, "r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            rows.append(json.loads(line))
-    return rows
 
 
 def infer_total_frames(row: Dict[str, Any]) -> int:
@@ -129,6 +118,7 @@ def build_episode_curve(row: Dict[str, Any]) -> EpisodeCurve:
         dense_progress_gt=dense_progress_gt,
     )
 
+
 def format_metrics_text(metrics: Dict[str, Any], num_plotted: int) -> str:
     return "\n".join([
         f"episodes(all/plotted): {metrics['num_episodes']}/{num_plotted}",
@@ -186,11 +176,10 @@ def plot_task_curves(
     ax_norm.legend(loc="best", fontsize=8, ncol=legend_ncol)
 
     fig.suptitle(task_desc, fontsize=14)
-    metrics_text = format_metrics_text(metrics, len(plotted_curves))
     fig.text(
         0.5,
         0.01,
-        metrics_text,
+        format_metrics_text(metrics, len(plotted_curves)),
         ha="center",
         va="bottom",
         fontsize=10,
@@ -201,15 +190,16 @@ def plot_task_curves(
     fig.savefig(output_path, dpi=dpi, bbox_inches="tight")
     plt.close(fig)
 
-def parse_args() -> argparse.Namespace:
+
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="可视化 progress_sparse_predictions.jsonl 的 dense 曲线和指标")
     parser.add_argument("--input-jsonl", type=str, required=True, help="progress_sparse_predictions.jsonl 路径")
-    parser.add_argument("--output-dir", type=str, default=None, help="输出目录，默认在输入文件旁边创建可视化目录")
+    parser.add_argument("--output-dir", type=str, default=None, help="输出目录，默认在输入文件旁创建")
     parser.add_argument("--episodes-per-task", type=int, default=12, help="每个 task 采样多少个 episode 画图")
     parser.add_argument("--seed", type=int, default=42, help="采样 seed")
     parser.add_argument("--dpi", type=int, default=150, help="图片 DPI")
     parser.add_argument("--tasks", nargs="*", default=None, help="可选：只可视化指定 task_desc")
-    return parser.parse_args()
+    return parser
 
 
 def main(args: argparse.Namespace) -> None:
@@ -228,9 +218,7 @@ def main(args: argparse.Namespace) -> None:
     if not grouped_curves:
         raise ValueError("没有可用于可视化的 task")
 
-    output_dir = args.output_dir
-    if output_dir is None:
-        output_dir = resolve_default_output_dir(args.input_jsonl, "_viz")
+    output_dir = args.output_dir or resolve_default_output_dir(args.input_jsonl, "_viz")
     os.makedirs(output_dir, exist_ok=True)
 
     plotted_curves_by_task: Dict[str, List[EpisodeCurve]] = {}
@@ -244,13 +232,12 @@ def main(args: argparse.Namespace) -> None:
         plotted_curves_by_task[task_desc] = plotted_curves
         metrics = summarize_task_metrics(task_curves)
 
-        file_name = sanitize_filename(task_desc) + ".png"
         plot_task_curves(
             task_desc=task_desc,
             all_curves=task_curves,
             plotted_curves=plotted_curves,
             metrics=metrics,
-            output_path=os.path.join(output_dir, file_name),
+            output_path=os.path.join(output_dir, sanitize_filename(task_desc) + ".png"),
             dpi=args.dpi,
         )
 
@@ -263,21 +250,11 @@ def main(args: argparse.Namespace) -> None:
     with open(summary_path, "w", encoding="utf-8") as f:
         json.dump(summary_payload, f, ensure_ascii=False, indent=2)
 
-    print("=" * 60)
-    print(f"输入文件: {args.input_jsonl}")
-    print(f"输出目录: {output_dir}")
-    print(f"任务数量: {len(grouped_curves)}")
-    for task_desc, metrics in summary_payload["tasks"].items():
-        print(
-            f"- {task_desc}: n={metrics['num_episodes']}, "
-            f"pearson={metrics['pearson']:.3f}, "
-            f"spearman={metrics['spearman']:.3f}, "
-            f"norm_tv={metrics['norm_total_variation']:.3f}, "
-            f"mono={metrics['monotonicity_rate']:.3f}"
-        )
-    print(f"汇总指标已保存到: {summary_path}")
-    print("=" * 60)
+    print(f"input_jsonl: {args.input_jsonl}")
+    print(f"output_dir: {output_dir}")
+    print(f"num_tasks: {len(grouped_curves)}")
+    print(f"summary_path: {summary_path}")
 
 
 if __name__ == "__main__":
-    main(parse_args())
+    main(build_parser().parse_args())

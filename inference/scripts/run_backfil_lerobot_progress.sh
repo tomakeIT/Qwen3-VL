@@ -4,7 +4,7 @@ DATASET_ROOT="/home/jialeng/LightwheelDataFast/Robocasa_lerobot_6tasks"
 OUTPUT_ROOT="/home/jialeng/LightwheelDataFast/Robocasa_lerobot_6tasks_with_progress2"
 REFERENCE_MAP="/home/jialeng/Qwen3-VL/inference/data/6tasks_referece_map.json"
 
-python3 inference/backfill_lerobot_progress.py \
+python3 -m inference.backfill \
     --adapter $ADAPTER \
     --dataset-root $DATASET_ROOT \
     --output-root $OUTPUT_ROOT \

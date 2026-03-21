@@ -7,14 +7,14 @@ TASK_DECRIPTION="Put the white mug on the plate"
 CONFIG=dataset/build_config.yaml
 
 
-python3 inference/eval_pairwise_from_batch_samples.py \
+python3 -m inference.eval_pairwise \
     --adapter $ADAPTER_PATH \
     --data-samples $DATA_SAMPLES_PATH \
     --data-root $DATA_ROOT \
     --batch-size 64
 
 
-python3 inference/inference_pairwise_from_demo.py \
+python3 -m inference.pairwise_demo \
     --adapter $ADAPTER_PATH \
     --target-demo $TARGET_DEMO_PATH \
     --i 3 --j 20 \
@@ -22,7 +22,7 @@ python3 inference/inference_pairwise_from_demo.py \
     --task-desc "$TASK_DECRIPTION" \
     --config $CONFIG
 
-python3 inference/inference_curve_from_demo.py \
+python3 -m inference.curve_demo \
     --adapter $ADAPTER_PATH \
     --target-demo $TARGET_DEMO_PATH \
     --reference-demo $REFERENCE_DEMO_PATH \
@@ -32,11 +32,11 @@ python3 inference/inference_curve_from_demo.py \
     --output-dir outputs/inference_progress_curve \
     --output-fps 2.0
 
-python3 inference/eval_curves_from_batch_demos.py \
+python3 -m inference.eval_curves \
     --adapter $ADAPTER_PATH \
     --demo-list /home/lightwheel/erdao.liang/Qwen3-VL/utils/train_eval_split_index.json \
     --reference-demo $REFERENCE_DEMO_PATH \
     --task-desc "$TASK_DECRIPTION" \
     --config $CONFIG \
     --step-interval 2 \
-    --output outputs/eval_curves_from_batch_demos.json
+    --output outputs/eval_curves.json

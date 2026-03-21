@@ -20,7 +20,7 @@ for demo_dir in "$DEMOS_DIR"/*; do
     
     echo "处理: $demo_name -> $output_dir"
     
-    python3 inference/inference_curve_from_demo.py \
+    python3 -m inference.curve_demo \
         --adapter "$ADAPTER" \
         --target-demo "$demo_dir" \
         --task-desc "$TASK_DESC" \

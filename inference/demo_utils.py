@@ -1,15 +1,68 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+import os
 import random
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from tqdm import tqdm
 
-from common.demo_scan import resolve_pair_frame_paths, scan_demo_frames
 from utils.data_formatting import build_qwen_messages
 from utils.frame_sampling import sample_reference_frames_from_demo
 from utils.prompt import build_prompt
+from utils.utils import list_image_files
+
+
+def build_view_to_frames(
+    target_demo_path: str,
+    target_views: Sequence[str],
+) -> Dict[str, List[str]]:
+    view_to_frames: Dict[str, List[str]] = {}
+    for view_name in target_views:
+        view_to_frames[str(view_name)] = list_image_files(os.path.join(target_demo_path, view_name))
+    return view_to_frames
+
+
+def infer_demo_length(view_to_frames: Mapping[str, Sequence[str]]) -> int:
+    if len(view_to_frames) == 0:
+        return 0
+    return min(len(frames) for frames in view_to_frames.values())
+
+
+def scan_demo_frames(
+    target_demo_path: str,
+    target_views: Sequence[str],
+) -> Tuple[Dict[str, List[str]], int]:
+    view_to_frames = build_view_to_frames(target_demo_path, target_views)
+    return view_to_frames, infer_demo_length(view_to_frames)
+
+
+def clamp_frame_index(frame_index: int, total_frames: int) -> int:
+    if total_frames <= 0:
+        return 0
+    return max(0, min(total_frames - 1, int(frame_index)))
+
+
+def resolve_pair_frame_paths(
+    target_demo_path: str,
+    view_to_frames: Mapping[str, Sequence[str]],
+    target_views: Sequence[str],
+    i: int,
+    j: int,
+) -> Tuple[List[str], List[str]]:
+    total_frames = infer_demo_length(view_to_frames)
+    i = clamp_frame_index(i, total_frames)
+    j = clamp_frame_index(j, total_frames)
+
+    target_paths_t1: List[str] = []
+    target_paths_t2: List[str] = []
+    for view_name in target_views:
+        view_name = str(view_name)
+        view_path = os.path.join(target_demo_path, view_name)
+        frames = view_to_frames[view_name]
+        target_paths_t1.append(os.path.abspath(os.path.join(view_path, frames[i])))
+        target_paths_t2.append(os.path.abspath(os.path.join(view_path, frames[j])))
+    return target_paths_t1, target_paths_t2
 
 
 def sample_reference_demo_pack(
@@ -17,7 +70,6 @@ def sample_reference_demo_pack(
     reference_config,
     rng: Optional[random.Random] = None,
 ) -> Tuple[List[Any], List[int]]:
-    """采样并缓存 reference demo，用于跨多个 pair 复用。"""
     if not reference_demo_path:
         return [], []
 
@@ -42,7 +94,6 @@ def build_messages_from_inputs(
     target_view_names: Sequence[str],
     task_desc: str,
 ) -> List[Dict[str, Any]]:
-    """根据预加载图像对象或路径直接构造 Qwen messages。"""
     img_paths, human_str = build_prompt(
         ref_img_paths=list(reference_inputs),
         ref_progress_ints=list(reference_progress_ints),
@@ -64,7 +115,6 @@ def build_messages_from_demo(
     target_views: Sequence[str],
     reference_config,
 ) -> List[Dict[str, Any]]:
-    """根据 demo 路径和参数直接构造 messages 格式。"""
     view_to_frames, total_frames = scan_demo_frames(target_demo_path, target_views)
     if total_frames < 2:
         raise ValueError(f"Target demo has insufficient frames: T={total_frames}")
@@ -96,7 +146,6 @@ def build_messages_for_job_chunk(
     build_message_fn: Callable[[Any], Tuple[int, int, List[Dict[str, Any]]]],
     global_build_workers: int,
 ) -> Tuple[List[Tuple[int, int]], List[List[Dict[str, Any]]]]:
-    """为一小块 jobs 并行构建 messages，控制内存峰值。"""
     effective_workers = max(1, global_build_workers)
     all_meta: List[Tuple[int, int]] = []
     all_messages: List[List[Dict[str, Any]]] = []
@@ -106,7 +155,7 @@ def build_messages_for_job_chunk(
         for episode_id, pair_idx, messages in tqdm(
             iterator,
             total=len(jobs),
-            desc="构建messages",
+            desc="构建 messages",
         ):
             all_meta.append((episode_id, pair_idx))
             all_messages.append(messages)
@@ -117,7 +166,7 @@ def build_messages_for_job_chunk(
         for episode_id, pair_idx, messages in tqdm(
             iterator,
             total=len(jobs),
-            desc="构建messages",
+            desc="构建 messages",
         ):
             all_meta.append((episode_id, pair_idx))
             all_messages.append(messages)

@@ -2,13 +2,13 @@ import argparse
 import json
 import os
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Sequence, Tuple
 
 import numpy as np
 
-from common.io_utils import load_jsonl_rows
-from common.metrics import calc_total_variation, compute_ground_truth_delta_curve
-from common.viz_utils import (
+from inference.io_utils import load_jsonl_rows
+from inference.metrics import calc_total_variation, compute_ground_truth_delta_curve
+from inference.viz_utils import (
     build_summary_payload as build_viz_summary_payload,
     group_items_by,
     resolve_default_output_dir,
@@ -31,6 +31,7 @@ class EpisodeDeltaCurve:
     frame_indices: np.ndarray
     delta_progress: np.ndarray
     gt_delta_curve: np.ndarray
+
 
 def infer_total_frames(row: Dict[str, Any]) -> int:
     total_frames = row.get("total_frames")
@@ -137,7 +138,7 @@ def compute_episode_metrics(curve: EpisodeDeltaCurve) -> Dict[str, float]:
         "num_pairs": float(curve.num_pairs),
         "num_missing_pairs": float(curve.num_missing_pairs),
         "pair_offset": float(curve.pair_offset),
-        }
+    }
 
 
 def summarize_task_metrics(curves: Sequence[EpisodeDeltaCurve]) -> Dict[str, Any]:
@@ -172,11 +173,7 @@ def build_episode_curve(row: Dict[str, Any]) -> EpisodeDeltaCurve:
     missing_pair_indices = [tuple(int(v) for v in pair) for pair in row.get("missing_pair_indices", [])]
     total_frames = infer_total_frames(row)
     pair_offset = infer_pair_offset(row)
-    frame_indices = resolve_frame_indices(
-        row=row,
-        total_frames=total_frames,
-        delta_length=delta_progress.size,
-    )
+    frame_indices = resolve_frame_indices(row=row, total_frames=total_frames, delta_length=delta_progress.size)
     if delta_progress.size == total_frames:
         valid_pair_count = len(pair_indices) if pair_indices else max(total_frames - pair_offset, 0)
     else:
@@ -200,6 +197,7 @@ def build_episode_curve(row: Dict[str, Any]) -> EpisodeDeltaCurve:
         delta_progress=delta_progress,
         gt_delta_curve=gt_delta_curve,
     )
+
 
 def format_metrics_text(metrics: Dict[str, Any], num_plotted: int) -> str:
     return "\n".join([
@@ -229,10 +227,7 @@ def plot_task_curves(
     ax_raw, ax_norm = axes
 
     for curve in plotted_curves:
-        label = (
-            f"ep={curve.episode_index}, T={curve.total_frames}, "
-            f"mean={float(np.mean(curve.delta_progress)):.2f}"
-        )
+        label = f"ep={curve.episode_index}, T={curve.total_frames}, mean={float(np.mean(curve.delta_progress)):.2f}"
         ax_raw.plot(curve.frame_indices, curve.delta_progress, alpha=0.75, linewidth=1.4, label=label)
         normalized_time = (
             curve.frame_indices / max(curve.total_frames - 1, 1)
@@ -242,22 +237,8 @@ def plot_task_curves(
         ax_norm.plot(normalized_time, curve.delta_progress, alpha=0.75, linewidth=1.4, label=label)
 
         if curve.gt_delta_curve.size > 0:
-            ax_raw.plot(
-                curve.frame_indices,
-                curve.gt_delta_curve,
-                linestyle="--",
-                linewidth=1.5,
-                color="black",
-                alpha=0.25,
-            )
-            ax_norm.plot(
-                normalized_time,
-                curve.gt_delta_curve,
-                linestyle="--",
-                linewidth=1.5,
-                color="black",
-                alpha=0.25,
-            )
+            ax_raw.plot(curve.frame_indices, curve.gt_delta_curve, linestyle="--", linewidth=1.5, color="black", alpha=0.25)
+            ax_norm.plot(normalized_time, curve.gt_delta_curve, linestyle="--", linewidth=1.5, color="black", alpha=0.25)
 
     ax_raw.set_title("Delta Curve vs Frame Index")
     ax_raw.set_xlabel("Frame Index")
@@ -274,11 +255,10 @@ def plot_task_curves(
     ax_norm.legend(loc="best", fontsize=8, ncol=legend_ncol)
 
     fig.suptitle(task_desc, fontsize=14)
-    metrics_text = format_metrics_text(metrics, len(plotted_curves))
     fig.text(
         0.5,
         0.01,
-        metrics_text,
+        format_metrics_text(metrics, len(plotted_curves)),
         ha="center",
         va="bottom",
         fontsize=10,
@@ -289,15 +269,16 @@ def plot_task_curves(
     fig.savefig(output_path, dpi=dpi, bbox_inches="tight")
     plt.close(fig)
 
-def parse_args() -> argparse.Namespace:
+
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="可视化 progress_sparse_predictions.jsonl 的 dense delta 曲线和指标")
     parser.add_argument("--input-jsonl", type=str, required=True, help="progress_sparse_predictions.jsonl 路径")
-    parser.add_argument("--output-dir", type=str, default=None, help="输出目录，默认在输入文件旁边创建 delta 可视化目录")
+    parser.add_argument("--output-dir", type=str, default=None, help="输出目录，默认在输入文件旁创建")
     parser.add_argument("--episodes-per-task", type=int, default=12, help="每个 task 采样多少个 episode 画图")
     parser.add_argument("--seed", type=int, default=42, help="采样 seed")
     parser.add_argument("--dpi", type=int, default=150, help="图片 DPI")
     parser.add_argument("--tasks", nargs="*", default=None, help="可选：只可视化指定 task_desc")
-    return parser.parse_args()
+    return parser
 
 
 def main(args: argparse.Namespace) -> None:
@@ -316,9 +297,7 @@ def main(args: argparse.Namespace) -> None:
     if not grouped_curves:
         raise ValueError("没有可用于可视化的 task")
 
-    output_dir = args.output_dir
-    if output_dir is None:
-        output_dir = resolve_default_output_dir(args.input_jsonl, "_delta_viz")
+    output_dir = args.output_dir or resolve_default_output_dir(args.input_jsonl, "_delta_viz")
     os.makedirs(output_dir, exist_ok=True)
 
     plotted_curves_by_task: Dict[str, List[EpisodeDeltaCurve]] = {}
@@ -332,12 +311,11 @@ def main(args: argparse.Namespace) -> None:
         plotted_curves_by_task[task_desc] = plotted_curves
         metrics = summarize_task_metrics(task_curves)
 
-        file_name = sanitize_filename(task_desc) + ".png"
         plot_task_curves(
             task_desc=task_desc,
             plotted_curves=plotted_curves,
             metrics=metrics,
-            output_path=os.path.join(output_dir, file_name),
+            output_path=os.path.join(output_dir, sanitize_filename(task_desc) + ".png"),
             dpi=args.dpi,
         )
 
@@ -350,21 +328,11 @@ def main(args: argparse.Namespace) -> None:
     with open(summary_path, "w", encoding="utf-8") as f:
         json.dump(summary_payload, f, ensure_ascii=False, indent=2)
 
-    print("=" * 60)
-    print(f"输入文件: {args.input_jsonl}")
-    print(f"输出目录: {output_dir}")
-    print(f"任务数量: {len(grouped_curves)}")
-    for task_desc, metrics in summary_payload["tasks"].items():
-        print(
-            f"- {task_desc}: n={metrics['num_episodes']}, "
-            f"mae={metrics['mae_to_gt_delta']:.3f}, "
-            f"rmse={metrics['rmse_to_gt_delta']:.3f}, "
-            f"norm_tv={metrics['norm_total_variation']:.3f}, "
-            f"pos_rate={metrics['positive_rate']:.3f}"
-        )
-    print(f"汇总指标已保存到: {summary_path}")
-    print("=" * 60)
+    print(f"input_jsonl: {args.input_jsonl}")
+    print(f"output_dir: {output_dir}")
+    print(f"num_tasks: {len(grouped_curves)}")
+    print(f"summary_path: {summary_path}")
 
 
 if __name__ == "__main__":
-    main(parse_args())
+    main(build_parser().parse_args())

@@ -1,30 +1,23 @@
+from __future__ import annotations
+
 import argparse
-import json
 import os
 import random
-import sys
 from functools import partial
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
-
-CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-REPO_ROOT = os.path.dirname(CURRENT_DIR)
-if CURRENT_DIR not in sys.path:
-    sys.path.insert(0, CURRENT_DIR)
-if REPO_ROOT not in sys.path:
-    sys.path.insert(0, REPO_ROOT)
 
 import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 from tqdm import tqdm
 
-from common.io_utils import load_config_namespace, load_json_or_yaml
-from common.messages import (
+from inference.demo_utils import (
     build_messages_for_job_chunk,
     build_messages_from_inputs,
     sample_reference_demo_pack,
 )
-from lerobot_io import (
+from inference.io_utils import load_config_namespace, load_json_or_yaml
+from inference.lerobot_io import (
     clone_info_with_new_float_features,
     ensure_parent_dir,
     find_orphan_episode_files,
@@ -37,10 +30,16 @@ from lerobot_io import (
     write_json,
     write_jsonl,
 )
-from video_frame_reader import load_episode_frame_cache
+from inference.video_frame_reader import load_episode_frame_cache
 
 DEFAULT_DELTA_FEATURE = "prediction.progress_delta"
 TASK_MAP_CANDIDATE_FILES = ("task_descriptions.json", "task_map.json")
+
+
+def _print_block(title: str, rows: Sequence[Tuple[str, Any]]) -> None:
+    print(f"[{title}]")
+    for key, value in rows:
+        print(f"  {key}: {value}")
 
 
 def _load_mapping_file(path: str) -> Any:
@@ -126,13 +125,9 @@ def resolve_reference_map_by_task_desc(
             "因此必须提供或自动发现 source task map。"
         )
 
-    task_desc_to_name = {task_desc: task_name for task_name, task_desc in source_task_map.items()}
-
     for task_name, reference_path in raw_reference_map.items():
         if task_name not in source_task_map:
-            raise KeyError(
-                f"reference_map 中的 task_name `{task_name}` 不在 source task map 里。"
-            )
+            raise KeyError(f"reference_map 中的 task_name `{task_name}` 不在 source task map 里。")
         resolved_task_desc = source_task_map[task_name]
         if resolved_task_desc not in target_task_desc_set:
             continue
@@ -160,11 +155,6 @@ def resolve_reference_map_by_task_desc(
             + f"。当前 reference_map keys: {available_keys}"
             + alias_hint
         )
-
-    for task_desc, reference_path in resolved_reference_map.items():
-        task_name = task_desc_to_name.get(task_desc, "<unknown>")
-        print(f"reference 任务匹配: {task_name} -> {task_desc} -> {reference_path}")
-
     return resolved_reference_map
 
 
@@ -227,7 +217,6 @@ def build_reference_packs(
             "reference_progress_ints": reference_progress_ints,
             "reference_view_names": list(reference_config.views),
         }
-
     return reference_packs
 
 
@@ -237,9 +226,8 @@ def decode_episode_chunk(
     prefer_image_cache: bool,
     ffmpeg_bin: str,
 ) -> Dict[int, Dict[str, Dict[int, Any]]]:
-    """仅供 dry-run 使用：一次性解码小批量 episode 的所需帧。"""
     frame_caches: Dict[int, Dict[str, Dict[int, Any]]] = {}
-    for episode_meta in tqdm(episode_metas, desc="解码episode帧缓存"):
+    for episode_meta in tqdm(episode_metas, desc="解码 episode 帧"):
         if episode_meta["num_pairs"] == 0:
             continue
         required_frames = sorted({frame_idx for pair in episode_meta["ij_pairs"] for frame_idx in pair})
@@ -303,15 +291,10 @@ def infer_dense_delta_predictions(
 
     total_chunks = (len(global_jobs) + message_chunk_size - 1) // message_chunk_size
     episode_meta_by_id = {meta["episode_id"]: meta for meta in episode_metas}
-    print(
-        f"全局任务数={len(global_jobs)}，build_workers={max(1, global_build_workers)}，"
-        f"message_chunk_size={message_chunk_size}"
-    )
 
     for chunk_idx, start_idx in enumerate(range(0, len(global_jobs), message_chunk_size), start=1):
         end_idx = min(start_idx + message_chunk_size, len(global_jobs))
         job_chunk = list(global_jobs[start_idx:end_idx])
-        print(f"处理 dense inference chunk {chunk_idx}/{total_chunks}，jobs={len(job_chunk)}")
 
         required_frames_by_episode: Dict[int, set[int]] = {}
         for job in job_chunk:
@@ -342,7 +325,7 @@ def infer_dense_delta_predictions(
         if len(all_messages) == 0:
             continue
 
-        chunk_desc = desc if total_chunks == 1 else f"{desc} chunk {chunk_idx}/{total_chunks}"
+        chunk_desc = desc if total_chunks == 1 else f"{desc} {chunk_idx}/{total_chunks}"
         all_predictions = inference.infer_from_messages_batch(
             all_messages,
             batch_size=batch_size,
@@ -350,8 +333,25 @@ def infer_dense_delta_predictions(
         )
         for (episode_id, pair_idx), pred in zip(all_meta, all_predictions):
             episode_predictions[episode_id][pair_idx] = pred
-
     return episode_predictions
+
+
+def build_dense_delta_column(
+    total_frames: int,
+    pair_indices: Sequence[Tuple[int, int]],
+    delta_progress: Sequence[float],
+) -> np.ndarray:
+    dense_delta = np.zeros(total_frames, dtype=np.float32)
+    last_filled_index: Optional[int] = None
+    last_filled_value = 0.0
+    for (start_frame, _), delta_value in zip(pair_indices, delta_progress):
+        start_frame = int(start_frame)
+        last_filled_index = start_frame
+        last_filled_value = float(delta_value)
+        dense_delta[start_frame] = last_filled_value
+    if last_filled_index is not None and last_filled_index + 1 < total_frames:
+        dense_delta[last_filled_index + 1:] = last_filled_value
+    return dense_delta
 
 
 def build_dense_delta_results(
@@ -385,7 +385,6 @@ def build_dense_delta_results(
             pair_indices=pair_indices_valid,
             delta_progress=delta_values,
         )
-
         dense_results.append({
             "episode_id": episode_id,
             "episode_index": episode_meta["episode_index"],
@@ -398,26 +397,7 @@ def build_dense_delta_results(
             "delta_progress": dense_delta.tolist(),
             "missing_pair_indices": missing_pair_indices,
         })
-
     return dense_results
-
-
-def build_dense_delta_column(
-    total_frames: int,
-    pair_indices: Sequence[Tuple[int, int]],
-    delta_progress: Sequence[float],
-) -> np.ndarray:
-    dense_delta = np.zeros(total_frames, dtype=np.float32)
-    last_filled_index: Optional[int] = None
-    last_filled_value = 0.0
-    for (start_frame, _), delta_value in zip(pair_indices, delta_progress):
-        start_frame = int(start_frame)
-        last_filled_index = start_frame
-        last_filled_value = float(delta_value)
-        dense_delta[start_frame] = last_filled_value
-    if last_filled_index is not None and last_filled_index + 1 < total_frames:
-        dense_delta[last_filled_index + 1:] = last_filled_value
-    return dense_delta
 
 
 def compute_scalar_stats(values: np.ndarray) -> Dict[str, List[float]]:
@@ -452,7 +432,6 @@ def write_augmented_parquet(
             f"parquet 行数与写回序列长度不一致: path={input_path}, rows={table.num_rows}, "
             f"delta={len(dense_delta)}"
         )
-
     if delta_feature_name in table.column_names:
         raise ValueError(f"输出 parquet 已包含列 `{delta_feature_name}`: {input_path}")
 
@@ -460,11 +439,7 @@ def write_augmented_parquet(
         delta_feature_name,
         pa.array(np.asarray(dense_delta, dtype=np.float32), type=pa.float32()),
     )
-
-    metadata = update_huggingface_metadata(
-        table.schema.metadata,
-        [delta_feature_name],
-    )
+    metadata = update_huggingface_metadata(table.schema.metadata, [delta_feature_name])
     table = table.replace_schema_metadata(metadata)
     ensure_parent_dir(output_path)
     pq.write_table(table, output_path, compression="snappy")
@@ -483,8 +458,7 @@ def validate_output_dataset(
     if delta_feature_name not in output_info.get("features", {}):
         raise RuntimeError(f"输出 info.json 缺少特征 `{delta_feature_name}`")
 
-    sample_episode_metas = list(episode_metas[:verify_samples])
-    for episode_meta in sample_episode_metas:
+    for episode_meta in list(episode_metas[:verify_samples]):
         output_parquet_path = resolve_episode_parquet_path(
             output_root,
             output_info,
@@ -507,7 +481,7 @@ def run_dry_run(
     ffmpeg_bin: str,
 ) -> None:
     if len(episode_metas) == 0:
-        print("dry-run: 没有 episode 可供检查")
+        _print_block("dry_run", [("episodes", 0)])
         return
 
     first_chunk = list(episode_metas)
@@ -531,6 +505,7 @@ def run_dry_run(
             }
             break
 
+    sample_message_items = 0
     if sample_job is not None:
         _, _, messages = build_lerobot_job_message(
             sample_job,
@@ -538,15 +513,18 @@ def run_dry_run(
             reference_packs=reference_packs,
             target_views=target_views,
         )
-        content_length = len(messages[0]["content"]) if messages else 0
-        print(f"dry-run: 成功构建示例 message，content items={content_length}")
+        sample_message_items = len(messages[0]["content"]) if messages else 0
 
     total_pairs = sum(meta["num_pairs"] for meta in first_chunk)
-    print(f"dry-run: 校验 episode 数={len(first_chunk)}，总 pair 数={total_pairs}")
+    _print_block("dry_run", [
+        ("episodes", len(first_chunk)),
+        ("pairs", total_pairs),
+        ("sample_message_items", sample_message_items),
+    ])
 
 
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="对 LeRobot v2.1 数据集回填 pairwise progress 推理结果")
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="对 LeRobot v2.1 数据集回填 dense delta progress")
     parser.add_argument("--base-model", type=str, default="models/Qwen-VL-2B-Instruct")
     parser.add_argument("--adapter", type=str, required=True)
     parser.add_argument("--dataset-root", type=str, required=True, help="LeRobot v2.1 数据集根目录")
@@ -555,21 +533,21 @@ def parse_args() -> argparse.Namespace:
         "--reference-map",
         type=str,
         required=True,
-        help="reference demo 路径映射；只支持 {task_name: reference_demo_path} 这一种格式",
+        help="reference demo 路径映射；只支持 {task_name: reference_demo_path}",
     )
     parser.add_argument(
         "--source-task-map",
         type=str,
         default=None,
-        help="可选：源数据集的 task_name -> task_description 映射文件；不传则尝试从 reference 路径祖先目录自动发现",
+        help="可选：源数据集的 task_name -> task_description 映射文件；不传则尝试自动发现",
     )
-    parser.add_argument("--config", type=str, default="dataset/configs/build_config_15tasks.yaml", help="训练/推理使用的 YAML 配置")
-    parser.add_argument("--pair-interval", type=int, default=50, help="dense pair 的时间间隔；50 表示使用 (i, i+50)")
+    parser.add_argument("--config", type=str, default="dataset/configs/build_config_15tasks.yaml")
+    parser.add_argument("--pair-interval", type=int, default=50, help="dense pair 时间间隔")
     parser.add_argument("--batch-size", type=int, default=8, help="每张 GPU 的子 batch 大小")
     parser.add_argument("--num-gpus", type=int, default=1, help="使用的 GPU 数量")
     parser.add_argument("--global-build-workers", type=int, default=8, help="构建 Qwen messages 的线程数")
-    parser.add_argument("--message-chunk-size", type=int, default=128, help="每次送入多 GPU 推理的 message 数量")
-    parser.add_argument("--episode-chunk-size", type=int, default=1, help="每次处理多少个 episode，控制 dense 解码和内存峰值")
+    parser.add_argument("--message-chunk-size", type=int, default=128, help="每次送入推理的 message 数量")
+    parser.add_argument("--episode-chunk-size", type=int, default=1, help="每次处理多少个 episode")
     parser.add_argument("--ffmpeg-workers", type=int, default=6, help="单个 episode 内并行解码多少路视频")
     parser.add_argument("--ffmpeg-bin", type=str, default="ffmpeg")
     parser.add_argument("--seed", type=int, default=42)
@@ -578,7 +556,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--limit-episodes", type=int, default=None, help="仅与 --dry-run 配合，用于快速抽样校验")
     parser.add_argument("--no-image-cache", action="store_true", help="禁用 images/ cache，强制从视频解码")
     parser.add_argument("--verify-samples", type=int, default=3, help="写回完成后随机校验的 parquet 数量")
-    return parser.parse_args()
+    return parser
 
 
 def main(args: argparse.Namespace) -> None:
@@ -600,9 +578,6 @@ def main(args: argparse.Namespace) -> None:
         dataset_root=args.dataset_root,
         valid_episode_indices=[episode_record.episode_index for episode_record in episode_records],
     )
-    for orphan_path in orphan_paths:
-        print(f"警告：发现未被 episodes.jsonl 声明的孤儿 parquet，输出时将跳过: {orphan_path}")
-
     if args.limit_episodes is not None:
         episode_records = episode_records[:args.limit_episodes]
 
@@ -613,14 +588,7 @@ def main(args: argparse.Namespace) -> None:
         source_task_map_path = args.source_task_map
         source_task_map = load_task_description_map(args.source_task_map)
     else:
-        source_task_map_path, source_task_map = auto_discover_task_description_map(
-            list(raw_reference_map.values())
-        )
-
-    if source_task_map_path:
-        print(f"已加载 source task map: {source_task_map_path}")
-    else:
-        print("未自动发现 source task map，后续会要求 reference_map 的 task_name 必须能通过 --source-task-map 解析")
+        source_task_map_path, source_task_map = auto_discover_task_description_map(list(raw_reference_map.values()))
 
     reference_map = resolve_reference_map_by_task_desc(
         raw_reference_map=raw_reference_map,
@@ -656,8 +624,31 @@ def main(args: argparse.Namespace) -> None:
             "target_demo_path": f"episode_{episode_record.episode_index:06d}",
         })
 
-    print(f"目标视角映射: {view_mapping}")
-    print(f"待处理 episode 数量: {len(episode_metas)}")
+    num_tasks = len({episode_record.task_desc for episode_record in episode_records})
+    _print_block("backfill_start", [
+        ("dataset_root", args.dataset_root),
+        ("output_root", args.output_root if args.output_root else "<dry-run>"),
+        ("dry_run", args.dry_run),
+        ("episodes", len(episode_metas)),
+        ("tasks", num_tasks),
+        ("views", ",".join(target_views)),
+        ("pair_interval", args.pair_interval),
+        ("batch_size", args.batch_size),
+        ("num_gpus", args.num_gpus),
+        ("episode_chunk_size", args.episode_chunk_size),
+        ("message_chunk_size", args.message_chunk_size),
+        ("image_cache", not args.no_image_cache),
+        ("view_mapping", view_mapping),
+    ])
+    _print_block("references", [
+        ("source_task_map", source_task_map_path if source_task_map_path else "<not-found>"),
+        ("reference_tasks", len(reference_packs)),
+    ])
+    if orphan_paths:
+        preview = ", ".join(orphan_paths[:3])
+        if len(orphan_paths) > 3:
+            preview += ", ..."
+        _print_block("warnings", [("orphan_parquet_count", len(orphan_paths)), ("examples", preview)])
 
     if args.dry_run:
         dry_run_metas = episode_metas[: max(1, min(len(episode_metas), args.episode_chunk_size))]
@@ -681,24 +672,21 @@ def main(args: argparse.Namespace) -> None:
     )
 
     existing_stats_rows = load_lerobot_episode_stats_rows(args.dataset_root)
-    existing_stats_by_episode = {
-        int(row["episode_index"]): row for row in existing_stats_rows
-    }
+    existing_stats_by_episode = {int(row["episode_index"]): row for row in existing_stats_rows}
     output_episode_stats_rows: List[Dict[str, Any]] = []
     delta_manifest_rows: List[Dict[str, Any]] = []
 
-    from multi_gpu_inferencer import MultiGPUDeltaProgressInference
+    from inference.multi_gpu_inferencer import MultiGPUDeltaProgressInference
 
     inference = MultiGPUDeltaProgressInference(
         base_model_path=args.base_model,
         adapter_path=args.adapter,
         num_gpus=args.num_gpus,
     )
+
+    chunk_list = list(chunked(episode_metas, args.episode_chunk_size))
     try:
-        for episode_chunk in tqdm(
-            list(chunked(episode_metas, args.episode_chunk_size)),
-            desc="处理episode chunks",
-        ):
+        for chunk_idx, episode_chunk in enumerate(tqdm(chunk_list, desc="回填 chunks"), start=1):
             global_jobs: List[Dict[str, Any]] = []
             for episode_meta in episode_chunk:
                 for pair_idx, (i, j) in enumerate(episode_meta["ij_pairs"]):
@@ -710,6 +698,9 @@ def main(args: argparse.Namespace) -> None:
                         "task_desc": episode_meta["task_desc"],
                     })
 
+            tqdm.write(
+                f"[chunk {chunk_idx}/{len(chunk_list)}] episodes={len(episode_chunk)} pairs={len(global_jobs)}"
+            )
             episode_predictions = infer_dense_delta_predictions(
                 inference=inference,
                 episode_metas=episode_chunk,
@@ -785,6 +776,9 @@ def main(args: argparse.Namespace) -> None:
                     "delta_progress": list(dense_result["delta_progress"]),
                     "missing_pair_indices": [list(pair) for pair in dense_result["missing_pair_indices"]],
                 })
+            tqdm.write(
+                f"[chunk {chunk_idx}/{len(chunk_list)}] wrote_episodes={len(episode_chunk)}"
+            )
     finally:
         inference.close()
 
@@ -797,8 +791,14 @@ def main(args: argparse.Namespace) -> None:
         delta_feature_name=args.delta_feature_name,
         verify_samples=args.verify_samples,
     )
-    print(f"完成，输出数据集写入: {args.output_root}")
+
+    _print_block("backfill_done", [
+        ("output_root", args.output_root),
+        ("episodes", len(episode_metas)),
+        ("manifest_rows", len(delta_manifest_rows)),
+        ("verify_samples", args.verify_samples),
+    ])
 
 
 if __name__ == "__main__":
-    main(parse_args())
+    main(build_parser().parse_args())
