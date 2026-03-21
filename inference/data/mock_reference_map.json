@@ -1,0 +1,16 @@
+{
+  "ArrangeVegetables": "/path/to/split_image_source_dataset/ArrangeVegetables/ArrangeVegetables_1234567890123456",
+  "BreadAndCheese": "/path/to/split_image_source_dataset/BreadAndCheese/BreadAndCheese_1234567890123456",
+  "BreadSetupSlicing": "/path/to/split_image_source_dataset/BreadSetupSlicing/BreadSetupSlicing_1234567890123456",
+  "CheesyBread": "/path/to/split_image_source_dataset/CheesyBread/CheesyBread_1234567890123456",
+  "CloseDishwasher": "/path/to/split_image_source_dataset/CloseDishwasher/CloseDishwasher_1234567890123456",
+  "CloseDrawer": "/path/to/split_image_source_dataset/CloseDrawer/CloseDrawer_1234567890123456",
+  "CloseFridge": "/path/to/split_image_source_dataset/CloseFridge/CloseFridge_1234567890123456",
+  "CloseMicrowave": "/path/to/split_image_source_dataset/CloseMicrowave/CloseMicrowave_1234567890123456",
+  "CoffeeServeMug": "/path/to/split_image_source_dataset/CoffeeServeMug/CoffeeServeMug_1234567890123456",
+  "CoffeeSetupMug": "/path/to/split_image_source_dataset/CoffeeSetupMug/CoffeeSetupMug_1234567890123456",
+  "OpenDishwasher": "/path/to/split_image_source_dataset/OpenDishwasher/OpenDishwasher_1234567890123456",
+  "OpenDrawer": "/path/to/split_image_source_dataset/OpenDrawer/OpenDrawer_1234567890123456",
+  "OpenFridge": "/path/to/split_image_source_dataset/OpenFridge/OpenFridge_1234567890123456",
+  "OpenMicrowave": "/path/to/split_image_source_dataset/OpenMicrowave/OpenMicrowave_1234567890123456"
+}

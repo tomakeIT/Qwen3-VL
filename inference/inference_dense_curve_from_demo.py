@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 对单个demo进行密集采样推理，输出JSON格式的progress数据
 采样方式：(0, delta_t), (1, delta_t+1), (2, delta_t+2), ..., (T-1, min(T-1+delta_t, T-1))
@@ -7,14 +9,13 @@
 import os
 import json
 import argparse
-import yaml
 from typing import List, Dict, Any, Optional
 from tqdm import tqdm
 from types import SimpleNamespace
 
-from inferencer import DeltaProgressInference
-from utils.utils import list_image_files, dict_to_namespace
-from inference_pairwise_from_demo import build_messages_from_demo
+from common.demo_scan import scan_demo_frames
+from common.io_utils import load_config_namespace
+from common.messages import build_messages_from_demo
 
 
 def infer_dense_progress_curve(
@@ -35,14 +36,7 @@ def infer_dense_progress_curve(
     Returns:
         包含推理结果的字典
     """
-    # 获取所有视角的帧列表
-    view_to_frames: Dict[str, List[str]] = {}
-    for v in target_views:
-        v_path = os.path.join(target_demo_path, v)
-        frames = list_image_files(v_path)
-        view_to_frames[v] = frames
-
-    T = min(len(frames) for frames in view_to_frames.values())
+    _, T = scan_demo_frames(target_demo_path, target_views)
     if T < 2:
         raise ValueError(f"Target demo has insufficient frames: T={T}")
 
@@ -100,11 +94,8 @@ def infer_dense_progress_curve(
 def main(args):
     os.makedirs(args.output_dir, exist_ok=True)
     
-    # 加载配置
-    with open(args.config, "r", encoding="utf-8") as f:
-        config_dict = yaml.safe_load(f)
-    
-    config = dict_to_namespace(config_dict)
+    config = load_config_namespace(args.config)
+    from inferencer import DeltaProgressInference
     
     # 初始化推理器
     inference = DeltaProgressInference(

@@ -2,115 +2,18 @@
 demo_path, i, j, reference_demo_path -> inference result
 """
 
-import os
 import argparse
-import yaml
-import random
-from typing import Any, Dict, List, Optional, Sequence, Tuple
-from utils.data_formatting import build_qwen_messages, compute_delta_progress_label_int
-from utils.utils import list_image_files, dict_to_namespace
-from utils.frame_sampling import sample_reference_frames_from_demo
-from utils.prompt import build_prompt
-
-
-def sample_reference_demo_pack(
-    reference_demo_path: Optional[str],
-    reference_config,
-    rng: Optional[random.Random] = None,
-) -> Tuple[List[Any], List[int]]:
-    """采样并缓存 reference demo，用于跨多个 pair 复用。"""
-    if not reference_demo_path:
-        return [], []
-
-    return sample_reference_frames_from_demo(
-        avg_frames=reference_config.avg_frames,
-        min_frames=reference_config.frames_min,
-        max_frames=reference_config.frames_max,
-        std=reference_config.frames_std,
-        reference_demo_path=reference_demo_path,
-        reference_views=reference_config.views,
-        ref_jitter=reference_config.jitter,
-        rng=rng,
-    )
-
-
-def build_messages_from_inputs(
-    target_inputs_t1: Sequence[Any],
-    target_inputs_t2: Sequence[Any],
-    reference_inputs: Sequence[Any],
-    reference_progress_ints: Sequence[int],
-    reference_view_names: Sequence[str],
-    target_view_names: Sequence[str],
-    task_desc: str,
-) -> List[Dict[str, Any]]:
-    """根据预加载图像对象或路径直接构造 Qwen messages。"""
-    img_paths, human_str = build_prompt(
-        ref_img_paths=list(reference_inputs),
-        ref_progress_ints=list(reference_progress_ints),
-        target_img_paths_t1=list(target_inputs_t1),
-        target_img_paths_t2=list(target_inputs_t2),
-        reference_view_names=list(reference_view_names),
-        target_view_names=list(target_view_names),
-        task_desc=task_desc,
-    )
-    return build_qwen_messages(human_str, img_paths)
-
-
-def build_messages_from_demo(
-    target_demo_path: str,
-    i: int,
-    j: int,
-    reference_demo_path: Optional[str],
-    task_desc: str,
-    target_views: List[str],
-    reference_config
-) -> List[Dict[str, Any]]:
-    """根据demo路径和参数直接构造messages格式"""
-    view_to_frames: Dict[str, List[str]] = {}
-    for v in target_views:
-        v_path = os.path.join(target_demo_path, v)
-        frames = list_image_files(v_path)
-        view_to_frames[v] = frames
-    
-    T = min(len(frames) for frames in view_to_frames.values())
-    if T < 2:
-        raise ValueError(f"Target demo has insufficient frames: T={T}")
-    
-    # 确保 i 和 j 在有效范围内
-    i = max(0, min(T - 1, i))
-    j = max(0, min(T - 1, j))
-    
-    target_paths_t1: List[str] = []
-    target_paths_t2: List[str] = []
-    for v in target_views:
-        v_path = os.path.join(target_demo_path, v)
-        frames_v = view_to_frames[v]
-        frame_i_name = frames_v[i]
-        frame_j_name = frames_v[j]
-        img_abs_1 = os.path.abspath(os.path.join(v_path, frame_i_name))
-        img_abs_2 = os.path.abspath(os.path.join(v_path, frame_j_name))
-        target_paths_t1.append(img_abs_1)
-        target_paths_t2.append(img_abs_2)
-
-    ref_inputs, ref_progress_ints = sample_reference_demo_pack(
-        reference_demo_path=reference_demo_path,
-        reference_config=reference_config,
-    )
-
-    return build_messages_from_inputs(
-        target_inputs_t1=target_paths_t1,
-        target_inputs_t2=target_paths_t2,
-        reference_inputs=ref_inputs,
-        reference_progress_ints=ref_progress_ints,
-        reference_view_names=reference_config.views,
-        target_view_names=target_views,
-        task_desc=task_desc,
-    )
+from common.demo_scan import scan_demo_frames
+from common.io_utils import load_config_namespace
+from common.messages import (
+    build_messages_from_demo,
+    build_messages_from_inputs,
+    sample_reference_demo_pack,
+)
+from utils.data_formatting import compute_delta_progress_label_int
 
 
 def main():
-    from inferencer import DeltaProgressInference
-
     parser = argparse.ArgumentParser()
     parser.add_argument("--base-model", type=str, default="models/Qwen-VL-2B-Instruct", help="基础模型路径")
     parser.add_argument("--adapter", type=str, required=True, help="LoRA适配器路径")
@@ -122,12 +25,8 @@ def main():
     parser.add_argument("--config", type=str, required=True, help="YAML配置文件路径")
     
     args = parser.parse_args()
-    
-    # 从 yaml 配置文件读取采样参数
-    with open(args.config, "r", encoding="utf-8") as f:
-        config_dict = yaml.safe_load(f)
-    
-    config = dict_to_namespace(config_dict)
+    config = load_config_namespace(args.config)
+    from inferencer import DeltaProgressInference
     
     target_views = config.sampling.required_views
     inference = DeltaProgressInference(
@@ -145,7 +44,7 @@ def main():
     )
     predicted_delta_progress = inference.infer_from_messages(messages)
 
-    T = min(len(list_image_files(os.path.join(args.target_demo, v))) for v in target_views)
+    _, T = scan_demo_frames(args.target_demo, target_views)
     gt_delta_progress = compute_delta_progress_label_int(args.i, args.j, T)
     print(f"Predicted Delta Progress: {predicted_delta_progress}")
     print(f"Ground Truth Delta Progress: {gt_delta_progress} (only if it is a successful demo)")

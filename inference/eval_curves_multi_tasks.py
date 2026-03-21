@@ -4,14 +4,14 @@ import os
 import random
 from typing import Any, Dict, List, Optional
 
+from common.io_utils import load_json
 from eval_curves_from_batch_demos import run_eval_curves_from_batch_demos
 
 
 def _load_json(path: str) -> Dict[str, Any]:
     if not os.path.exists(path):
         raise FileNotFoundError(f"文件不存在: {path}")
-    with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
+    return load_json(path)
 
 
 def _resolve_episode_path(raw_dataset_root: str, task: str, episode_id: str) -> str:

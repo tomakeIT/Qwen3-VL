@@ -239,19 +239,9 @@ def ensure_parent_dir(path: str) -> None:
     os.makedirs(os.path.dirname(path), exist_ok=True)
 
 
-def _symlink_or_copytree(src: str, dst: str, link_large_dirs: bool) -> None:
-    if not os.path.exists(src):
-        return
-    if link_large_dirs:
-        os.symlink(os.path.abspath(src), dst, target_is_directory=True)
-        return
-    shutil.copytree(src, dst)
-
-
 def prepare_output_dataset(
     input_root: str,
     output_root: str,
-    link_large_dirs: bool = True,
 ) -> None:
     if os.path.exists(output_root):
         raise FileExistsError(f"输出目录已存在: {output_root}")
@@ -259,11 +249,6 @@ def prepare_output_dataset(
     os.makedirs(output_root, exist_ok=False)
     os.makedirs(os.path.join(output_root, "meta"), exist_ok=True)
     os.makedirs(os.path.join(output_root, "data"), exist_ok=True)
-
-    for dir_name in ("videos", "images"):
-        src_dir = os.path.join(input_root, dir_name)
-        dst_dir = os.path.join(output_root, dir_name)
-        _symlink_or_copytree(src_dir, dst_dir, link_large_dirs=link_large_dirs)
 
     norm_stats_path = os.path.join(input_root, "norm_stats.json")
     if os.path.exists(norm_stats_path):

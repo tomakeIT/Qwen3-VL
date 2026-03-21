@@ -16,11 +16,14 @@ if REPO_ROOT not in sys.path:
 import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
-import yaml
 from tqdm import tqdm
 
-from eval_curves_from_batch_demos import build_sparse_curve_results, infer_job_predictions
-from inference_pairwise_from_demo import build_messages_from_inputs, sample_reference_demo_pack
+from common.io_utils import load_config_namespace, load_json_or_yaml
+from common.messages import (
+    build_messages_for_job_chunk,
+    build_messages_from_inputs,
+    sample_reference_demo_pack,
+)
 from lerobot_io import (
     clone_info_with_new_float_features,
     ensure_parent_dir,
@@ -34,20 +37,14 @@ from lerobot_io import (
     write_json,
     write_jsonl,
 )
-from utils.utils import dict_to_namespace
 from video_frame_reader import load_episode_frame_cache
 
-
-DEFAULT_CUMULATIVE_FEATURE = "prediction.progress_cumulative"
 DEFAULT_DELTA_FEATURE = "prediction.progress_delta"
 TASK_MAP_CANDIDATE_FILES = ("task_descriptions.json", "task_map.json")
 
 
 def _load_mapping_file(path: str) -> Any:
-    with open(path, "r", encoding="utf-8") as f:
-        if path.endswith((".yaml", ".yml")):
-            return yaml.safe_load(f)
-        return json.load(f)
+    return load_json_or_yaml(path)
 
 
 def load_reference_map(path: str) -> Dict[str, str]:
@@ -171,21 +168,17 @@ def resolve_reference_map_by_task_desc(
     return resolved_reference_map
 
 
-def build_anchor_pairs(total_frames: int, pair_interval: int) -> Tuple[List[int], List[Tuple[int, int]], np.ndarray]:
+def build_dense_window_pairs(total_frames: int, pair_interval: int) -> Tuple[List[Tuple[int, int]], np.ndarray]:
     if total_frames <= 0:
-        return [], [], np.array([], dtype=np.int64)
+        return [], np.array([], dtype=np.int64)
     if pair_interval <= 0:
         raise ValueError(f"pair_interval 必须为正整数，当前为 {pair_interval}")
+    if total_frames <= pair_interval:
+        return [], np.array([], dtype=np.int64)
 
-    anchors = list(range(0, total_frames, pair_interval))
-    if not anchors:
-        anchors = [0]
-    if anchors[-1] != total_frames - 1:
-        anchors.append(total_frames - 1)
-
-    pair_indices = list(zip(anchors[:-1], anchors[1:]))
-    frame_indices = np.array([j for _, j in pair_indices], dtype=np.int64)
-    return anchors, pair_indices, frame_indices
+    pair_indices = [(i, i + pair_interval) for i in range(0, total_frames - pair_interval)]
+    frame_indices = np.array([i for i, _ in pair_indices], dtype=np.int64)
+    return pair_indices, frame_indices
 
 
 def chunked(seq: Sequence[Any], chunk_size: int) -> Iterable[Sequence[Any]]:
@@ -244,14 +237,15 @@ def decode_episode_chunk(
     prefer_image_cache: bool,
     ffmpeg_bin: str,
 ) -> Dict[int, Dict[str, Dict[int, Any]]]:
+    """仅供 dry-run 使用：一次性解码小批量 episode 的所需帧。"""
     frame_caches: Dict[int, Dict[str, Dict[int, Any]]] = {}
     for episode_meta in tqdm(episode_metas, desc="解码episode帧缓存"):
         if episode_meta["num_pairs"] == 0:
             continue
-        anchor_indices = sorted({frame_idx for pair in episode_meta["ij_pairs"] for frame_idx in pair})
+        required_frames = sorted({frame_idx for pair in episode_meta["ij_pairs"] for frame_idx in pair})
         frame_caches[episode_meta["episode_id"]] = load_episode_frame_cache(
             video_sources=episode_meta["video_sources"],
-            frame_indices=anchor_indices,
+            frame_indices=required_frames,
             ffmpeg_workers=ffmpeg_workers,
             prefer_image_cache=prefer_image_cache,
             ffmpeg_bin=ffmpeg_bin,
@@ -284,31 +278,151 @@ def build_lerobot_job_message(
     return episode_id, job["pair_idx"], messages
 
 
-def reconstruct_dense_sequences(
+def infer_dense_delta_predictions(
+    inference,
+    episode_metas: Sequence[Dict[str, Any]],
+    global_jobs: Sequence[Dict[str, Any]],
+    reference_packs: Mapping[str, Dict[str, Any]],
+    target_views: Sequence[str],
+    ffmpeg_workers: int,
+    prefer_image_cache: bool,
+    ffmpeg_bin: str,
+    batch_size: int,
+    global_build_workers: int,
+    message_chunk_size: Optional[int],
+    desc: str,
+) -> Dict[int, List[Optional[int]]]:
+    episode_predictions: Dict[int, List[Optional[int]]] = {
+        meta["episode_id"]: [None] * meta["num_pairs"] for meta in episode_metas
+    }
+    if len(global_jobs) == 0:
+        return episode_predictions
+
+    if message_chunk_size is None or message_chunk_size <= 0:
+        message_chunk_size = len(global_jobs)
+
+    total_chunks = (len(global_jobs) + message_chunk_size - 1) // message_chunk_size
+    episode_meta_by_id = {meta["episode_id"]: meta for meta in episode_metas}
+    print(
+        f"全局任务数={len(global_jobs)}，build_workers={max(1, global_build_workers)}，"
+        f"message_chunk_size={message_chunk_size}"
+    )
+
+    for chunk_idx, start_idx in enumerate(range(0, len(global_jobs), message_chunk_size), start=1):
+        end_idx = min(start_idx + message_chunk_size, len(global_jobs))
+        job_chunk = list(global_jobs[start_idx:end_idx])
+        print(f"处理 dense inference chunk {chunk_idx}/{total_chunks}，jobs={len(job_chunk)}")
+
+        required_frames_by_episode: Dict[int, set[int]] = {}
+        for job in job_chunk:
+            required_frames_by_episode.setdefault(job["episode_id"], set()).update((job["i"], job["j"]))
+
+        frame_caches: Dict[int, Dict[str, Dict[int, Any]]] = {}
+        for episode_id, required_frames in required_frames_by_episode.items():
+            episode_meta = episode_meta_by_id[episode_id]
+            frame_caches[episode_id] = load_episode_frame_cache(
+                video_sources=episode_meta["video_sources"],
+                frame_indices=sorted(required_frames),
+                ffmpeg_workers=ffmpeg_workers,
+                prefer_image_cache=prefer_image_cache,
+                ffmpeg_bin=ffmpeg_bin,
+            )
+
+        build_message_fn = partial(
+            build_lerobot_job_message,
+            frame_caches=frame_caches,
+            reference_packs=reference_packs,
+            target_views=target_views,
+        )
+        all_meta, all_messages = build_messages_for_job_chunk(
+            jobs=job_chunk,
+            build_message_fn=build_message_fn,
+            global_build_workers=global_build_workers,
+        )
+        if len(all_messages) == 0:
+            continue
+
+        chunk_desc = desc if total_chunks == 1 else f"{desc} chunk {chunk_idx}/{total_chunks}"
+        all_predictions = inference.infer_from_messages_batch(
+            all_messages,
+            batch_size=batch_size,
+            desc=chunk_desc,
+        )
+        for (episode_id, pair_idx), pred in zip(all_meta, all_predictions):
+            episode_predictions[episode_id][pair_idx] = pred
+
+    return episode_predictions
+
+
+def build_dense_delta_results(
+    episode_metas: Sequence[Dict[str, Any]],
+    episode_predictions: Mapping[int, Sequence[Optional[int]]],
+    fill_missing_with_zero: bool = True,
+) -> List[Dict[str, Any]]:
+    dense_results: List[Dict[str, Any]] = []
+
+    for episode_meta in episode_metas:
+        episode_id = episode_meta["episode_id"]
+        preds = list(episode_predictions[episode_id])
+        pair_indices_all = [tuple(int(v) for v in pair) for pair in episode_meta["ij_pairs"]]
+        delta_values: List[float] = []
+        pair_indices_valid: List[Tuple[int, int]] = []
+        missing_pair_indices: List[Tuple[int, int]] = []
+
+        for idx, pred in enumerate(preds):
+            pair = pair_indices_all[idx]
+            if pred is None:
+                missing_pair_indices.append(pair)
+                if not fill_missing_with_zero:
+                    continue
+                pred = 0
+
+            pair_indices_valid.append(pair)
+            delta_values.append(float(pred))
+
+        dense_delta = build_dense_delta_column(
+            total_frames=episode_meta["T"],
+            pair_indices=pair_indices_valid,
+            delta_progress=delta_values,
+        )
+
+        dense_results.append({
+            "episode_id": episode_id,
+            "episode_index": episode_meta["episode_index"],
+            "task_desc": episode_meta["task_desc"],
+            "reference_demo_path": episode_meta["reference_demo_path"],
+            "total_frames": episode_meta["T"],
+            "pair_offset": episode_meta["pair_offset"],
+            "pair_indices": pair_indices_valid,
+            "frame_indices": list(range(episode_meta["T"])),
+            "delta_progress": dense_delta.tolist(),
+            "missing_pair_indices": missing_pair_indices,
+        })
+
+    return dense_results
+
+
+def build_dense_delta_column(
     total_frames: int,
     pair_indices: Sequence[Tuple[int, int]],
-    cumulative_progress: Sequence[float],
-) -> Tuple[np.ndarray, np.ndarray]:
-    if total_frames <= 0:
-        return np.array([], dtype=np.float32), np.array([], dtype=np.float32)
-    if len(pair_indices) == 0:
-        zeros = np.zeros(total_frames, dtype=np.float32)
-        return zeros, zeros.copy()
-
-    anchor_frames = [int(pair_indices[0][0])] + [int(j) for _, j in pair_indices]
-    anchor_progress = [0.0] + [float(value) for value in cumulative_progress]
-    dense_cumulative = np.interp(
-        np.arange(total_frames, dtype=np.float32),
-        np.array(anchor_frames, dtype=np.float32),
-        np.array(anchor_progress, dtype=np.float32),
-    ).astype(np.float32)
-    dense_delta = np.diff(dense_cumulative, prepend=dense_cumulative[:1]).astype(np.float32)
-    dense_delta[0] = 0.0
-    return dense_cumulative, dense_delta
+    delta_progress: Sequence[float],
+) -> np.ndarray:
+    dense_delta = np.zeros(total_frames, dtype=np.float32)
+    last_filled_index: Optional[int] = None
+    last_filled_value = 0.0
+    for (start_frame, _), delta_value in zip(pair_indices, delta_progress):
+        start_frame = int(start_frame)
+        last_filled_index = start_frame
+        last_filled_value = float(delta_value)
+        dense_delta[start_frame] = last_filled_value
+    if last_filled_index is not None and last_filled_index + 1 < total_frames:
+        dense_delta[last_filled_index + 1:] = last_filled_value
+    return dense_delta
 
 
 def compute_scalar_stats(values: np.ndarray) -> Dict[str, List[float]]:
-    if values.size == 0:
+    valid_values = values[np.isfinite(values)]
+    if valid_values.size == 0:
         return {
             "min": [0.0],
             "max": [0.0],
@@ -318,37 +432,30 @@ def compute_scalar_stats(values: np.ndarray) -> Dict[str, List[float]]:
         }
 
     return {
-        "min": [float(np.min(values))],
-        "max": [float(np.max(values))],
-        "mean": [float(np.mean(values))],
-        "std": [float(np.std(values))],
-        "count": [int(values.size)],
+        "min": [float(np.min(valid_values))],
+        "max": [float(np.max(valid_values))],
+        "mean": [float(np.mean(valid_values))],
+        "std": [float(np.std(valid_values))],
+        "count": [int(valid_values.size)],
     }
 
 
 def write_augmented_parquet(
     input_path: str,
     output_path: str,
-    dense_cumulative: np.ndarray,
     dense_delta: np.ndarray,
-    cumulative_feature_name: str,
     delta_feature_name: str,
 ) -> None:
     table = pq.read_table(input_path)
-    if table.num_rows != len(dense_cumulative) or table.num_rows != len(dense_delta):
+    if table.num_rows != len(dense_delta):
         raise ValueError(
             f"parquet 行数与写回序列长度不一致: path={input_path}, rows={table.num_rows}, "
-            f"cum={len(dense_cumulative)}, delta={len(dense_delta)}"
+            f"delta={len(dense_delta)}"
         )
 
-    for feature_name in (cumulative_feature_name, delta_feature_name):
-        if feature_name in table.column_names:
-            raise ValueError(f"输出 parquet 已包含列 `{feature_name}`: {input_path}")
+    if delta_feature_name in table.column_names:
+        raise ValueError(f"输出 parquet 已包含列 `{delta_feature_name}`: {input_path}")
 
-    table = table.append_column(
-        cumulative_feature_name,
-        pa.array(np.asarray(dense_cumulative, dtype=np.float32), type=pa.float32()),
-    )
     table = table.append_column(
         delta_feature_name,
         pa.array(np.asarray(dense_delta, dtype=np.float32), type=pa.float32()),
@@ -356,7 +463,7 @@ def write_augmented_parquet(
 
     metadata = update_huggingface_metadata(
         table.schema.metadata,
-        [cumulative_feature_name, delta_feature_name],
+        [delta_feature_name],
     )
     table = table.replace_schema_metadata(metadata)
     ensure_parent_dir(output_path)
@@ -366,7 +473,6 @@ def write_augmented_parquet(
 def validate_output_dataset(
     output_root: str,
     episode_metas: Sequence[Dict[str, Any]],
-    cumulative_feature_name: str,
     delta_feature_name: str,
     verify_samples: int,
 ) -> None:
@@ -374,9 +480,8 @@ def validate_output_dataset(
         return
 
     output_info = load_lerobot_info(output_root)
-    for feature_name in (cumulative_feature_name, delta_feature_name):
-        if feature_name not in output_info.get("features", {}):
-            raise RuntimeError(f"输出 info.json 缺少特征 `{feature_name}`")
+    if delta_feature_name not in output_info.get("features", {}):
+        raise RuntimeError(f"输出 info.json 缺少特征 `{delta_feature_name}`")
 
     sample_episode_metas = list(episode_metas[:verify_samples])
     for episode_meta in sample_episode_metas:
@@ -385,7 +490,7 @@ def validate_output_dataset(
             output_info,
             episode_meta["episode_index"],
         )
-        table = pq.read_table(output_parquet_path, columns=[cumulative_feature_name, delta_feature_name])
+        table = pq.read_table(output_parquet_path, columns=[delta_feature_name])
         if table.num_rows != episode_meta["T"]:
             raise RuntimeError(
                 f"输出 parquet 行数校验失败: path={output_parquet_path}, "
@@ -459,20 +564,18 @@ def parse_args() -> argparse.Namespace:
         help="可选：源数据集的 task_name -> task_description 映射文件；不传则尝试从 reference 路径祖先目录自动发现",
     )
     parser.add_argument("--config", type=str, default="dataset/configs/build_config_15tasks.yaml", help="训练/推理使用的 YAML 配置")
-    parser.add_argument("--pair-interval", type=int, default=50, help="两次稀疏推理之间的帧间隔")
+    parser.add_argument("--pair-interval", type=int, default=50, help="dense pair 的时间间隔；50 表示使用 (i, i+50)")
     parser.add_argument("--batch-size", type=int, default=8, help="每张 GPU 的子 batch 大小")
     parser.add_argument("--num-gpus", type=int, default=1, help="使用的 GPU 数量")
     parser.add_argument("--global-build-workers", type=int, default=8, help="构建 Qwen messages 的线程数")
     parser.add_argument("--message-chunk-size", type=int, default=128, help="每次送入多 GPU 推理的 message 数量")
-    parser.add_argument("--episode-chunk-size", type=int, default=4, help="每次处理多少个 episode，控制解码和内存峰值")
+    parser.add_argument("--episode-chunk-size", type=int, default=1, help="每次处理多少个 episode，控制 dense 解码和内存峰值")
     parser.add_argument("--ffmpeg-workers", type=int, default=6, help="单个 episode 内并行解码多少路视频")
     parser.add_argument("--ffmpeg-bin", type=str, default="ffmpeg")
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--cumulative-feature-name", type=str, default=DEFAULT_CUMULATIVE_FEATURE)
     parser.add_argument("--delta-feature-name", type=str, default=DEFAULT_DELTA_FEATURE)
     parser.add_argument("--dry-run", action="store_true", help="只校验路径/解码/message 构造，不加载模型、不写文件")
     parser.add_argument("--limit-episodes", type=int, default=None, help="仅与 --dry-run 配合，用于快速抽样校验")
-    parser.add_argument("--copy-large-dirs", action="store_true", help="默认复用 videos/images 的符号链接，设置此项则完整拷贝")
     parser.add_argument("--no-image-cache", action="store_true", help="禁用 images/ cache，强制从视频解码")
     parser.add_argument("--verify-samples", type=int, default=3, help="写回完成后随机校验的 parquet 数量")
     return parser.parse_args()
@@ -486,9 +589,7 @@ def main(args: argparse.Namespace) -> None:
     if args.episode_chunk_size <= 0:
         raise ValueError("--episode-chunk-size 必须为正整数")
 
-    with open(args.config, "r", encoding="utf-8") as f:
-        config_dict = yaml.safe_load(f)
-    config = dict_to_namespace(config_dict)
+    config = load_config_namespace(args.config)
     target_views = list(config.sampling.required_views)
 
     info, _, episode_records, view_mapping = load_lerobot_episodes(
@@ -535,7 +636,7 @@ def main(args: argparse.Namespace) -> None:
 
     episode_metas: List[Dict[str, Any]] = []
     for episode_id, episode_record in enumerate(episode_records):
-        _, pair_indices, frame_indices = build_anchor_pairs(
+        pair_indices, frame_indices = build_dense_window_pairs(
             total_frames=episode_record.length,
             pair_interval=args.pair_interval,
         )
@@ -550,6 +651,7 @@ def main(args: argparse.Namespace) -> None:
             "frame_indices": frame_indices,
             "ij_pairs": pair_indices,
             "num_pairs": len(pair_indices),
+            "pair_offset": args.pair_interval,
             "T": episode_record.length,
             "target_demo_path": f"episode_{episode_record.episode_index:06d}",
         })
@@ -572,11 +674,10 @@ def main(args: argparse.Namespace) -> None:
     prepare_output_dataset(
         input_root=args.dataset_root,
         output_root=args.output_root,
-        link_large_dirs=not args.copy_large_dirs,
     )
     output_info = clone_info_with_new_float_features(
         info=info,
-        feature_names=[args.cumulative_feature_name, args.delta_feature_name],
+        feature_names=[args.delta_feature_name],
     )
 
     existing_stats_rows = load_lerobot_episode_stats_rows(args.dataset_root)
@@ -584,7 +685,7 @@ def main(args: argparse.Namespace) -> None:
         int(row["episode_index"]): row for row in existing_stats_rows
     }
     output_episode_stats_rows: List[Dict[str, Any]] = []
-    sparse_manifest_rows: List[Dict[str, Any]] = []
+    delta_manifest_rows: List[Dict[str, Any]] = []
 
     from multi_gpu_inferencer import MultiGPUDeltaProgressInference
 
@@ -598,13 +699,6 @@ def main(args: argparse.Namespace) -> None:
             list(chunked(episode_metas, args.episode_chunk_size)),
             desc="处理episode chunks",
         ):
-            frame_caches = decode_episode_chunk(
-                episode_metas=episode_chunk,
-                ffmpeg_workers=args.ffmpeg_workers,
-                prefer_image_cache=not args.no_image_cache,
-                ffmpeg_bin=args.ffmpeg_bin,
-            )
-
             global_jobs: List[Dict[str, Any]] = []
             for episode_meta in episode_chunk:
                 for pair_idx, (i, j) in enumerate(episode_meta["ij_pairs"]):
@@ -616,49 +710,46 @@ def main(args: argparse.Namespace) -> None:
                         "task_desc": episode_meta["task_desc"],
                     })
 
-            build_message_fn = partial(
-                build_lerobot_job_message,
-                frame_caches=frame_caches,
+            episode_predictions = infer_dense_delta_predictions(
+                inference=inference,
+                episode_metas=episode_chunk,
+                global_jobs=global_jobs,
                 reference_packs=reference_packs,
                 target_views=target_views,
-            )
-            episode_predictions = infer_job_predictions(
-                inference=inference,
-                episode_metas=list(episode_chunk),
-                global_jobs=global_jobs,
-                build_message_fn=build_message_fn,
+                ffmpeg_workers=args.ffmpeg_workers,
+                prefer_image_cache=not args.no_image_cache,
+                ffmpeg_bin=args.ffmpeg_bin,
                 batch_size=args.batch_size,
                 global_build_workers=args.global_build_workers,
                 message_chunk_size=args.message_chunk_size,
-                desc="LeRobot backfill inference",
+                desc="LeRobot dense delta inference",
             )
-            sparse_results = build_sparse_curve_results(
-                episode_metas=list(episode_chunk),
+            dense_delta_results = build_dense_delta_results(
+                episode_metas=episode_chunk,
                 episode_predictions=episode_predictions,
                 fill_missing_with_zero=True,
             )
-            sparse_result_by_episode_id = {
-                sparse_result["episode_id"]: sparse_result for sparse_result in sparse_results
+            dense_result_by_episode_id = {
+                dense_result["episode_id"]: dense_result for dense_result in dense_delta_results
             }
 
             for episode_meta in episode_chunk:
-                sparse_result = sparse_result_by_episode_id.get(episode_meta["episode_id"])
-                if sparse_result is None:
-                    dense_cumulative = np.zeros(episode_meta["T"], dtype=np.float32)
+                dense_result = dense_result_by_episode_id.get(episode_meta["episode_id"])
+                if dense_result is None:
                     dense_delta = np.zeros(episode_meta["T"], dtype=np.float32)
-                    sparse_result = {
+                    dense_result = {
+                        "episode_index": episode_meta["episode_index"],
+                        "task_desc": episode_meta["task_desc"],
+                        "reference_demo_path": episode_meta["reference_demo_path"],
+                        "total_frames": episode_meta["T"],
+                        "pair_offset": episode_meta["pair_offset"],
                         "pair_indices": [],
-                        "delta_progress": [],
-                        "cumulative_progress": [],
+                        "delta_progress": dense_delta.tolist(),
                         "missing_pair_indices": episode_meta["ij_pairs"],
-                        "frame_indices": [],
+                        "frame_indices": list(range(episode_meta["T"])),
                     }
                 else:
-                    dense_cumulative, dense_delta = reconstruct_dense_sequences(
-                        total_frames=episode_meta["T"],
-                        pair_indices=sparse_result["pair_indices"],
-                        cumulative_progress=sparse_result["cumulative_progress"],
-                    )
+                    dense_delta = np.asarray(dense_result["delta_progress"], dtype=np.float32)
 
                 output_parquet_path = resolve_episode_parquet_path(
                     args.output_root,
@@ -668,9 +759,7 @@ def main(args: argparse.Namespace) -> None:
                 write_augmented_parquet(
                     input_path=episode_meta["parquet_path"],
                     output_path=output_parquet_path,
-                    dense_cumulative=dense_cumulative,
                     dense_delta=dense_delta,
-                    cumulative_feature_name=args.cumulative_feature_name,
                     delta_feature_name=args.delta_feature_name,
                 )
 
@@ -682,30 +771,29 @@ def main(args: argparse.Namespace) -> None:
                     "episode_index": base_stats_row["episode_index"],
                     "stats": dict(base_stats_row.get("stats", {})),
                 }
-                output_stats_row["stats"][args.cumulative_feature_name] = compute_scalar_stats(dense_cumulative)
                 output_stats_row["stats"][args.delta_feature_name] = compute_scalar_stats(dense_delta)
                 output_episode_stats_rows.append(output_stats_row)
 
-                sparse_manifest_rows.append({
-                    "episode_index": episode_meta["episode_index"],
-                    "task_desc": episode_meta["task_desc"],
-                    "reference_demo_path": episode_meta["reference_demo_path"],
-                    "pair_indices": [list(pair) for pair in sparse_result["pair_indices"]],
-                    "frame_indices": list(sparse_result["frame_indices"]),
-                    "delta_progress": list(sparse_result["delta_progress"]),
-                    "cumulative_progress": list(sparse_result["cumulative_progress"]),
-                    "missing_pair_indices": [list(pair) for pair in sparse_result["missing_pair_indices"]],
+                delta_manifest_rows.append({
+                    "episode_index": dense_result["episode_index"],
+                    "task_desc": dense_result["task_desc"],
+                    "reference_demo_path": dense_result["reference_demo_path"],
+                    "total_frames": dense_result["total_frames"],
+                    "pair_offset": dense_result["pair_offset"],
+                    "pair_indices": [list(pair) for pair in dense_result["pair_indices"]],
+                    "frame_indices": list(dense_result["frame_indices"]),
+                    "delta_progress": list(dense_result["delta_progress"]),
+                    "missing_pair_indices": [list(pair) for pair in dense_result["missing_pair_indices"]],
                 })
     finally:
         inference.close()
 
     write_json(os.path.join(args.output_root, "meta", "info.json"), output_info)
     write_jsonl(os.path.join(args.output_root, "meta", "episodes_stats.jsonl"), output_episode_stats_rows)
-    write_jsonl(os.path.join(args.output_root, "meta", "progress_sparse_predictions.jsonl"), sparse_manifest_rows)
+    write_jsonl(os.path.join(args.output_root, "meta", "progress_sparse_predictions.jsonl"), delta_manifest_rows)
     validate_output_dataset(
         output_root=args.output_root,
         episode_metas=episode_metas,
-        cumulative_feature_name=args.cumulative_feature_name,
         delta_feature_name=args.delta_feature_name,
         verify_samples=args.verify_samples,
     )

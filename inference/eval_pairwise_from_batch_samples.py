@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 批量推理 data_samples 并计算 MSE 指标
 定位：inference/eval pair-wise from datasamples file
@@ -9,7 +11,7 @@ from typing import List, Dict, Any, Optional, Tuple
 from tqdm import tqdm
 import numpy as np
 
-from multi_gpu_inferencer import MultiGPUDeltaProgressInference
+from common.io_utils import load_json
 from utils.data_formatting import data_sample_to_messages_and_answer
 
 
@@ -58,6 +60,8 @@ def evaluate_data_samples(
 
 
 def main(args):
+    from multi_gpu_inferencer import MultiGPUDeltaProgressInference
+
     # 初始化推理器（自动处理单/多 GPU）
     inference = MultiGPUDeltaProgressInference(
         base_model_path=args.base_model,
@@ -67,8 +71,7 @@ def main(args):
     
     # 加载data_samples
     print(f"正在加载data_samples: {args.data_samples}")
-    with open(args.data_samples, "r", encoding="utf-8") as f:
-        data_samples = json.load(f)
+    data_samples = load_json(args.data_samples)
     
     print(f"共 {len(data_samples)} 个样本")
     

@@ -1,10 +1,11 @@
+from __future__ import annotations
+
 """
 demo_path, reference_demo_path -> progress curve
 """
 
 import os
 import argparse
-import yaml
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
@@ -13,18 +14,14 @@ from types import SimpleNamespace
 from typing import List, Optional, Tuple, Dict
 from tqdm import tqdm
 
-from multi_gpu_inferencer import MultiGPUDeltaProgressInference
-from utils.utils import list_image_files, dict_to_namespace
-from inference_pairwise_from_demo import build_messages_from_demo
+from common.demo_scan import scan_demo_frames
+from common.io_utils import load_config_namespace
+from common.messages import build_messages_from_demo
 
 
 def load_frames_for_indices(target_demo_path: str, target_views: List[str], frame_indices: np.ndarray) -> List[np.ndarray]:
     """加载指定帧索引的图片（多视角拼接）"""
-    view_to_frames: Dict[str, List[str]] = {}
-    for v in target_views:
-        v_path = os.path.join(target_demo_path, v)
-        frames = list_image_files(v_path)
-        view_to_frames[v] = frames
+    view_to_frames, _ = scan_demo_frames(target_demo_path, target_views)
     
     loaded_frames = []
     for idx in frame_indices:
@@ -73,13 +70,7 @@ def infer_progress_curve(
         frame_indices: 帧索引数组
         progress_values: progress值数组
     """
-    view_to_frames: Dict[str, List[str]] = {}
-    for v in target_views:
-        v_path = os.path.join(target_demo_path, v)
-        frames = list_image_files(v_path)
-        view_to_frames[v] = frames
-
-    T = min(len(frames) for frames in view_to_frames.values())
+    _, T = scan_demo_frames(target_demo_path, target_views)
     if T < 2:
         raise ValueError(f"Target demo has insufficient frames: T={T}")
 
@@ -242,10 +233,8 @@ def main(args):
     
     os.makedirs(args.output_dir, exist_ok=True)
     
-    with open(args.config, "r", encoding="utf-8") as f:
-        config_dict = yaml.safe_load(f)
-    
-    config = dict_to_namespace(config_dict)
+    config = load_config_namespace(args.config)
+    from multi_gpu_inferencer import MultiGPUDeltaProgressInference
     
     # 初始化推理器（自动处理单/多 GPU）
     inference = MultiGPUDeltaProgressInference(
