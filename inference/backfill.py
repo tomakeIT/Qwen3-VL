@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import os
 import random
+import time
 from functools import partial
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
@@ -40,6 +41,235 @@ def _print_block(title: str, rows: Sequence[Tuple[str, Any]]) -> None:
     print(f"[{title}]")
     for key, value in rows:
         print(f"  {key}: {value}")
+
+
+class BackfillWandbTracker:
+    def __init__(
+        self,
+        *,
+        enabled: bool,
+        project: Optional[str],
+        run_name: Optional[str],
+        group: Optional[str],
+        tags: Optional[Sequence[str]],
+        log_interval: int,
+        total_episodes: int,
+        total_pairs: int,
+        total_tasks: int,
+        args: argparse.Namespace,
+    ) -> None:
+        self.enabled = bool(enabled)
+        self.total_episodes = int(total_episodes)
+        self.total_pairs = int(total_pairs)
+        self.total_tasks = int(total_tasks)
+        self.log_interval = max(1, int(log_interval))
+        self._start_time = time.time()
+        self._wandb = None
+        self._run = None
+
+        if not self.enabled:
+            return
+
+        if not project:
+            raise ValueError("启用 --wandb 时，必须通过 --wandb-project 或环境变量 WANDB_PROJECT 指定 project")
+
+        try:
+            import wandb  # type: ignore
+        except ImportError as exc:
+            raise RuntimeError("启用 --wandb 失败：当前环境未安装 wandb") from exc
+
+        config = {
+            "dataset_root": args.dataset_root,
+            "output_root": args.output_root,
+            "pair_interval": args.pair_interval,
+            "batch_size": args.batch_size,
+            "num_gpus": args.num_gpus,
+            "episode_chunk_size": args.episode_chunk_size,
+            "message_chunk_size": args.message_chunk_size,
+            "ffmpeg_workers": args.ffmpeg_workers,
+            "global_build_workers": args.global_build_workers,
+            "seed": args.seed,
+            "dry_run": args.dry_run,
+            "delta_feature_name": args.delta_feature_name,
+            "total_episodes": self.total_episodes,
+            "total_pairs": self.total_pairs,
+            "total_tasks": self.total_tasks,
+        }
+        self._wandb = wandb
+        self._run = wandb.init(
+            project=project,
+            name=run_name,
+            group=group,
+            tags=list(tags or []),
+            job_type="backfill",
+            config=config,
+        )
+
+        run_url = None
+        get_url = getattr(self._run, "get_url", None)
+        if callable(get_url):
+            run_url = get_url()
+        if not run_url:
+            run_url = getattr(self._run, "url", None)
+        _print_block("wandb", [
+            ("project", project),
+            ("run_name", getattr(self._run, "name", run_name or "<auto>")),
+            ("run_url", run_url or "<unavailable>"),
+        ])
+
+    def _progress_payload(self, *, pairs_completed: int, episodes_completed: int) -> Dict[str, Any]:
+        elapsed_sec = max(time.time() - self._start_time, 0.0)
+        pairs_per_sec = float(pairs_completed) / elapsed_sec if elapsed_sec > 1e-8 else 0.0
+        payload: Dict[str, Any] = {
+            "progress/pairs_completed": int(pairs_completed),
+            "progress/pairs_total": self.total_pairs,
+            "progress/episodes_completed": int(episodes_completed),
+            "progress/episodes_total": self.total_episodes,
+            "progress/tasks_total": self.total_tasks,
+            "runtime/elapsed_sec": elapsed_sec,
+            "runtime/pairs_per_sec": pairs_per_sec,
+        }
+        payload["progress/pairs_ratio"] = (
+            float(pairs_completed) / float(self.total_pairs)
+            if self.total_pairs > 0 else 1.0
+        )
+        payload["progress/episodes_ratio"] = (
+            float(episodes_completed) / float(self.total_episodes)
+            if self.total_episodes > 0 else 1.0
+        )
+        if pairs_per_sec > 1e-8 and pairs_completed < self.total_pairs:
+            payload["runtime/eta_sec"] = float(self.total_pairs - pairs_completed) / pairs_per_sec
+        return payload
+
+    def _log(self, payload: Dict[str, Any]) -> None:
+        if self._wandb is None or self._run is None:
+            return
+        self._wandb.log(payload)
+
+    def log_start(
+        self,
+        *,
+        target_views: Sequence[str],
+        view_mapping: Mapping[str, str],
+        source_task_map_path: Optional[str],
+        reference_tasks: int,
+        orphan_parquet_count: int,
+        image_cache_enabled: bool,
+    ) -> None:
+        self._log({
+            "status/event": "start",
+            "meta/target_views": ",".join(target_views),
+            "meta/view_mapping": dict(view_mapping),
+            "meta/source_task_map_path": source_task_map_path or "<not-found>",
+            "meta/reference_tasks": int(reference_tasks),
+            "meta/orphan_parquet_count": int(orphan_parquet_count),
+            "meta/image_cache_enabled": bool(image_cache_enabled),
+            **self._progress_payload(pairs_completed=0, episodes_completed=0),
+        })
+
+    def log_dry_run(self, *, dry_run_stats: Mapping[str, Any]) -> None:
+        self._log({
+            "status/event": "dry_run",
+            **{f"dry_run/{key}": value for key, value in dry_run_stats.items()},
+            **self._progress_payload(pairs_completed=0, episodes_completed=0),
+        })
+
+    def log_message_chunk(
+        self,
+        *,
+        episode_chunk_index: int,
+        total_episode_chunks: int,
+        message_chunk_index: int,
+        total_message_chunks: int,
+        pairs_in_message_chunk: int,
+        pairs_in_episode_chunk: int,
+        pairs_completed: int,
+        episodes_completed: int,
+    ) -> None:
+        if not self.enabled:
+            return
+        if message_chunk_index != 1 and message_chunk_index != total_message_chunks:
+            if message_chunk_index % self.log_interval != 0:
+                return
+        self._log({
+            "status/event": "message_chunk",
+            "chunk/episode_chunk_index": int(episode_chunk_index),
+            "chunk/episode_chunks_total": int(total_episode_chunks),
+            "chunk/message_chunk_index": int(message_chunk_index),
+            "chunk/message_chunks_total": int(total_message_chunks),
+            "chunk/pairs_in_message_chunk": int(pairs_in_message_chunk),
+            "chunk/pairs_in_episode_chunk": int(pairs_in_episode_chunk),
+            **self._progress_payload(
+                pairs_completed=pairs_completed,
+                episodes_completed=episodes_completed,
+            ),
+        })
+
+    def log_episode_chunk(
+        self,
+        *,
+        episode_chunk_index: int,
+        total_episode_chunks: int,
+        episodes_in_chunk: int,
+        pairs_in_chunk: int,
+        missing_pairs_in_chunk: int,
+        manifest_rows: int,
+        pairs_completed: int,
+        episodes_completed: int,
+    ) -> None:
+        self._log({
+            "status/event": "episode_chunk",
+            "chunk/episode_chunk_index": int(episode_chunk_index),
+            "chunk/episode_chunks_total": int(total_episode_chunks),
+            "chunk/episodes_in_chunk": int(episodes_in_chunk),
+            "chunk/pairs_in_chunk": int(pairs_in_chunk),
+            "chunk/missing_pairs_in_chunk": int(missing_pairs_in_chunk),
+            "output/manifest_rows": int(manifest_rows),
+            **self._progress_payload(
+                pairs_completed=pairs_completed,
+                episodes_completed=episodes_completed,
+            ),
+        })
+
+    def log_finish(
+        self,
+        *,
+        status: str,
+        manifest_rows: int,
+        pairs_completed: int,
+        episodes_completed: int,
+    ) -> None:
+        self._log({
+            "status/event": status,
+            "output/manifest_rows": int(manifest_rows),
+            **self._progress_payload(
+                pairs_completed=pairs_completed,
+                episodes_completed=episodes_completed,
+            ),
+        })
+
+    def log_failure(
+        self,
+        *,
+        error_type: str,
+        error_message: str,
+        pairs_completed: int,
+        episodes_completed: int,
+    ) -> None:
+        self._log({
+            "status/event": "failed",
+            "error/type": error_type,
+            "error/message": error_message[:1000],
+            **self._progress_payload(
+                pairs_completed=pairs_completed,
+                episodes_completed=episodes_completed,
+            ),
+        })
+
+    def finish(self, exit_code: int = 0) -> None:
+        if self._wandb is None:
+            return
+        self._wandb.finish(exit_code=exit_code)
 
 
 def _load_mapping_file(path: str) -> Any:
@@ -279,6 +509,11 @@ def infer_dense_delta_predictions(
     global_build_workers: int,
     message_chunk_size: Optional[int],
     desc: str,
+    tracker: Optional[BackfillWandbTracker] = None,
+    episode_chunk_index: int = 0,
+    total_episode_chunks: int = 0,
+    pairs_completed_before: int = 0,
+    episodes_completed_before: int = 0,
 ) -> Dict[int, List[Optional[int]]]:
     episode_predictions: Dict[int, List[Optional[int]]] = {
         meta["episode_id"]: [None] * meta["num_pairs"] for meta in episode_metas
@@ -333,6 +568,17 @@ def infer_dense_delta_predictions(
         )
         for (episode_id, pair_idx), pred in zip(all_meta, all_predictions):
             episode_predictions[episode_id][pair_idx] = pred
+        if tracker is not None:
+            tracker.log_message_chunk(
+                episode_chunk_index=episode_chunk_index,
+                total_episode_chunks=total_episode_chunks,
+                message_chunk_index=chunk_idx,
+                total_message_chunks=total_chunks,
+                pairs_in_message_chunk=len(job_chunk),
+                pairs_in_episode_chunk=len(global_jobs),
+                pairs_completed=pairs_completed_before + end_idx,
+                episodes_completed=episodes_completed_before,
+            )
     return episode_predictions
 
 
@@ -479,10 +725,11 @@ def run_dry_run(
     ffmpeg_workers: int,
     prefer_image_cache: bool,
     ffmpeg_bin: str,
-) -> None:
+) -> Dict[str, Any]:
     if len(episode_metas) == 0:
-        _print_block("dry_run", [("episodes", 0)])
-        return
+        payload = {"episodes": 0, "pairs": 0, "sample_message_items": 0}
+        _print_block("dry_run", list(payload.items()))
+        return payload
 
     first_chunk = list(episode_metas)
     frame_caches = decode_episode_chunk(
@@ -516,11 +763,17 @@ def run_dry_run(
         sample_message_items = len(messages[0]["content"]) if messages else 0
 
     total_pairs = sum(meta["num_pairs"] for meta in first_chunk)
+    payload = {
+        "episodes": len(first_chunk),
+        "pairs": total_pairs,
+        "sample_message_items": sample_message_items,
+    }
     _print_block("dry_run", [
         ("episodes", len(first_chunk)),
         ("pairs", total_pairs),
         ("sample_message_items", sample_message_items),
     ])
+    return payload
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -556,6 +809,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--limit-episodes", type=int, default=None, help="仅与 --dry-run 配合，用于快速抽样校验")
     parser.add_argument("--no-image-cache", action="store_true", help="禁用 images/ cache，强制从视频解码")
     parser.add_argument("--verify-samples", type=int, default=3, help="写回完成后随机校验的 parquet 数量")
+    parser.add_argument("--wandb", action="store_true", help="启用 Weights & Biases 进度跟踪")
+    parser.add_argument("--wandb-project", type=str, default=os.environ.get("WANDB_PROJECT"), help="W&B project 名称")
+    parser.add_argument("--wandb-run-name", type=str, default=None, help="W&B run name")
+    parser.add_argument("--wandb-group", type=str, default=None, help="W&B group")
+    parser.add_argument("--wandb-tags", nargs="*", default=None, help="W&B tags")
+    parser.add_argument("--wandb-log-interval", type=int, default=1, help="每隔多少个 message chunk 记录一次 W&B 进度")
     return parser
 
 
@@ -625,11 +884,13 @@ def main(args: argparse.Namespace) -> None:
         })
 
     num_tasks = len({episode_record.task_desc for episode_record in episode_records})
+    total_pairs = sum(meta["num_pairs"] for meta in episode_metas)
     _print_block("backfill_start", [
         ("dataset_root", args.dataset_root),
         ("output_root", args.output_root if args.output_root else "<dry-run>"),
         ("dry_run", args.dry_run),
         ("episodes", len(episode_metas)),
+        ("pairs_total", total_pairs),
         ("tasks", num_tasks),
         ("views", ",".join(target_views)),
         ("pair_interval", args.pair_interval),
@@ -650,154 +911,224 @@ def main(args: argparse.Namespace) -> None:
             preview += ", ..."
         _print_block("warnings", [("orphan_parquet_count", len(orphan_paths)), ("examples", preview)])
 
-    if args.dry_run:
-        dry_run_metas = episode_metas[: max(1, min(len(episode_metas), args.episode_chunk_size))]
-        run_dry_run(
-            episode_metas=dry_run_metas,
-            reference_packs=reference_packs,
-            target_views=target_views,
-            ffmpeg_workers=args.ffmpeg_workers,
-            prefer_image_cache=not args.no_image_cache,
-            ffmpeg_bin=args.ffmpeg_bin,
-        )
-        return
-
-    prepare_output_dataset(
-        input_root=args.dataset_root,
-        output_root=args.output_root,
+    tracker = BackfillWandbTracker(
+        enabled=args.wandb,
+        project=args.wandb_project,
+        run_name=args.wandb_run_name,
+        group=args.wandb_group,
+        tags=args.wandb_tags,
+        log_interval=args.wandb_log_interval,
+        total_episodes=len(episode_metas),
+        total_pairs=total_pairs,
+        total_tasks=num_tasks,
+        args=args,
     )
-    output_info = clone_info_with_new_float_features(
-        info=info,
-        feature_names=[args.delta_feature_name],
-    )
-
-    existing_stats_rows = load_lerobot_episode_stats_rows(args.dataset_root)
-    existing_stats_by_episode = {int(row["episode_index"]): row for row in existing_stats_rows}
-    output_episode_stats_rows: List[Dict[str, Any]] = []
-    delta_manifest_rows: List[Dict[str, Any]] = []
-
-    from inference.multi_gpu_inferencer import MultiGPUDeltaProgressInference
-
-    inference = MultiGPUDeltaProgressInference(
-        base_model_path=args.base_model,
-        adapter_path=args.adapter,
-        num_gpus=args.num_gpus,
+    tracker.log_start(
+        target_views=target_views,
+        view_mapping=view_mapping,
+        source_task_map_path=source_task_map_path,
+        reference_tasks=len(reference_packs),
+        orphan_parquet_count=len(orphan_paths),
+        image_cache_enabled=not args.no_image_cache,
     )
 
-    chunk_list = list(chunked(episode_metas, args.episode_chunk_size))
+    pairs_completed = 0
+    episodes_completed = 0
+    exit_code = 0
     try:
-        for chunk_idx, episode_chunk in enumerate(tqdm(chunk_list, desc="回填 chunks"), start=1):
-            global_jobs: List[Dict[str, Any]] = []
-            for episode_meta in episode_chunk:
-                for pair_idx, (i, j) in enumerate(episode_meta["ij_pairs"]):
-                    global_jobs.append({
-                        "episode_id": episode_meta["episode_id"],
-                        "pair_idx": pair_idx,
-                        "i": i,
-                        "j": j,
-                        "task_desc": episode_meta["task_desc"],
-                    })
-
-            tqdm.write(
-                f"[chunk {chunk_idx}/{len(chunk_list)}] episodes={len(episode_chunk)} pairs={len(global_jobs)}"
-            )
-            episode_predictions = infer_dense_delta_predictions(
-                inference=inference,
-                episode_metas=episode_chunk,
-                global_jobs=global_jobs,
+        if args.dry_run:
+            dry_run_metas = episode_metas[: max(1, min(len(episode_metas), args.episode_chunk_size))]
+            dry_run_stats = run_dry_run(
+                episode_metas=dry_run_metas,
                 reference_packs=reference_packs,
                 target_views=target_views,
                 ffmpeg_workers=args.ffmpeg_workers,
                 prefer_image_cache=not args.no_image_cache,
                 ffmpeg_bin=args.ffmpeg_bin,
-                batch_size=args.batch_size,
-                global_build_workers=args.global_build_workers,
-                message_chunk_size=args.message_chunk_size,
-                desc="LeRobot dense delta inference",
             )
-            dense_delta_results = build_dense_delta_results(
-                episode_metas=episode_chunk,
-                episode_predictions=episode_predictions,
-                fill_missing_with_zero=True,
+            tracker.log_dry_run(dry_run_stats=dry_run_stats)
+            tracker.log_finish(
+                status="dry_run_done",
+                manifest_rows=0,
+                pairs_completed=0,
+                episodes_completed=0,
             )
-            dense_result_by_episode_id = {
-                dense_result["episode_id"]: dense_result for dense_result in dense_delta_results
-            }
+            return
 
-            for episode_meta in episode_chunk:
-                dense_result = dense_result_by_episode_id.get(episode_meta["episode_id"])
-                if dense_result is None:
-                    dense_delta = np.zeros(episode_meta["T"], dtype=np.float32)
-                    dense_result = {
-                        "episode_index": episode_meta["episode_index"],
-                        "task_desc": episode_meta["task_desc"],
-                        "reference_demo_path": episode_meta["reference_demo_path"],
-                        "total_frames": episode_meta["T"],
-                        "pair_offset": episode_meta["pair_offset"],
-                        "pair_indices": [],
-                        "delta_progress": dense_delta.tolist(),
-                        "missing_pair_indices": episode_meta["ij_pairs"],
-                        "frame_indices": list(range(episode_meta["T"])),
-                    }
-                else:
-                    dense_delta = np.asarray(dense_result["delta_progress"], dtype=np.float32)
+        prepare_output_dataset(
+            input_root=args.dataset_root,
+            output_root=args.output_root,
+        )
+        output_info = clone_info_with_new_float_features(
+            info=info,
+            feature_names=[args.delta_feature_name],
+        )
 
-                output_parquet_path = resolve_episode_parquet_path(
-                    args.output_root,
-                    output_info,
-                    episode_meta["episode_index"],
+        existing_stats_rows = load_lerobot_episode_stats_rows(args.dataset_root)
+        existing_stats_by_episode = {int(row["episode_index"]): row for row in existing_stats_rows}
+        output_episode_stats_rows: List[Dict[str, Any]] = []
+        delta_manifest_rows: List[Dict[str, Any]] = []
+
+        from inference.multi_gpu_inferencer import MultiGPUDeltaProgressInference
+
+        inference = MultiGPUDeltaProgressInference(
+            base_model_path=args.base_model,
+            adapter_path=args.adapter,
+            num_gpus=args.num_gpus,
+        )
+
+        chunk_list = list(chunked(episode_metas, args.episode_chunk_size))
+        try:
+            for chunk_idx, episode_chunk in enumerate(tqdm(chunk_list, desc="回填 chunks"), start=1):
+                global_jobs: List[Dict[str, Any]] = []
+                for episode_meta in episode_chunk:
+                    for pair_idx, (i, j) in enumerate(episode_meta["ij_pairs"]):
+                        global_jobs.append({
+                            "episode_id": episode_meta["episode_id"],
+                            "pair_idx": pair_idx,
+                            "i": i,
+                            "j": j,
+                            "task_desc": episode_meta["task_desc"],
+                        })
+
+                tqdm.write(
+                    f"[chunk {chunk_idx}/{len(chunk_list)}] episodes={len(episode_chunk)} pairs={len(global_jobs)}"
                 )
-                write_augmented_parquet(
-                    input_path=episode_meta["parquet_path"],
-                    output_path=output_parquet_path,
-                    dense_delta=dense_delta,
-                    delta_feature_name=args.delta_feature_name,
+                episode_predictions = infer_dense_delta_predictions(
+                    inference=inference,
+                    episode_metas=episode_chunk,
+                    global_jobs=global_jobs,
+                    reference_packs=reference_packs,
+                    target_views=target_views,
+                    ffmpeg_workers=args.ffmpeg_workers,
+                    prefer_image_cache=not args.no_image_cache,
+                    ffmpeg_bin=args.ffmpeg_bin,
+                    batch_size=args.batch_size,
+                    global_build_workers=args.global_build_workers,
+                    message_chunk_size=args.message_chunk_size,
+                    desc="LeRobot dense delta inference",
+                    tracker=tracker,
+                    episode_chunk_index=chunk_idx,
+                    total_episode_chunks=len(chunk_list),
+                    pairs_completed_before=pairs_completed,
+                    episodes_completed_before=episodes_completed,
                 )
-
-                base_stats_row = existing_stats_by_episode.get(episode_meta["episode_index"], {
-                    "episode_index": episode_meta["episode_index"],
-                    "stats": {},
-                })
-                output_stats_row = {
-                    "episode_index": base_stats_row["episode_index"],
-                    "stats": dict(base_stats_row.get("stats", {})),
+                dense_delta_results = build_dense_delta_results(
+                    episode_metas=episode_chunk,
+                    episode_predictions=episode_predictions,
+                    fill_missing_with_zero=True,
+                )
+                dense_result_by_episode_id = {
+                    dense_result["episode_id"]: dense_result for dense_result in dense_delta_results
                 }
-                output_stats_row["stats"][args.delta_feature_name] = compute_scalar_stats(dense_delta)
-                output_episode_stats_rows.append(output_stats_row)
 
-                delta_manifest_rows.append({
-                    "episode_index": dense_result["episode_index"],
-                    "task_desc": dense_result["task_desc"],
-                    "reference_demo_path": dense_result["reference_demo_path"],
-                    "total_frames": dense_result["total_frames"],
-                    "pair_offset": dense_result["pair_offset"],
-                    "pair_indices": [list(pair) for pair in dense_result["pair_indices"]],
-                    "frame_indices": list(dense_result["frame_indices"]),
-                    "delta_progress": list(dense_result["delta_progress"]),
-                    "missing_pair_indices": [list(pair) for pair in dense_result["missing_pair_indices"]],
-                })
-            tqdm.write(
-                f"[chunk {chunk_idx}/{len(chunk_list)}] wrote_episodes={len(episode_chunk)}"
-            )
+                for episode_meta in episode_chunk:
+                    dense_result = dense_result_by_episode_id.get(episode_meta["episode_id"])
+                    if dense_result is None:
+                        dense_delta = np.zeros(episode_meta["T"], dtype=np.float32)
+                        dense_result = {
+                            "episode_index": episode_meta["episode_index"],
+                            "task_desc": episode_meta["task_desc"],
+                            "reference_demo_path": episode_meta["reference_demo_path"],
+                            "total_frames": episode_meta["T"],
+                            "pair_offset": episode_meta["pair_offset"],
+                            "pair_indices": [],
+                            "delta_progress": dense_delta.tolist(),
+                            "missing_pair_indices": episode_meta["ij_pairs"],
+                            "frame_indices": list(range(episode_meta["T"])),
+                        }
+                    else:
+                        dense_delta = np.asarray(dense_result["delta_progress"], dtype=np.float32)
+
+                    output_parquet_path = resolve_episode_parquet_path(
+                        args.output_root,
+                        output_info,
+                        episode_meta["episode_index"],
+                    )
+                    write_augmented_parquet(
+                        input_path=episode_meta["parquet_path"],
+                        output_path=output_parquet_path,
+                        dense_delta=dense_delta,
+                        delta_feature_name=args.delta_feature_name,
+                    )
+
+                    base_stats_row = existing_stats_by_episode.get(episode_meta["episode_index"], {
+                        "episode_index": episode_meta["episode_index"],
+                        "stats": {},
+                    })
+                    output_stats_row = {
+                        "episode_index": base_stats_row["episode_index"],
+                        "stats": dict(base_stats_row.get("stats", {})),
+                    }
+                    output_stats_row["stats"][args.delta_feature_name] = compute_scalar_stats(dense_delta)
+                    output_episode_stats_rows.append(output_stats_row)
+
+                    delta_manifest_rows.append({
+                        "episode_index": dense_result["episode_index"],
+                        "task_desc": dense_result["task_desc"],
+                        "reference_demo_path": dense_result["reference_demo_path"],
+                        "total_frames": dense_result["total_frames"],
+                        "pair_offset": dense_result["pair_offset"],
+                        "pair_indices": [list(pair) for pair in dense_result["pair_indices"]],
+                        "frame_indices": list(dense_result["frame_indices"]),
+                        "delta_progress": list(dense_result["delta_progress"]),
+                        "missing_pair_indices": [list(pair) for pair in dense_result["missing_pair_indices"]],
+                    })
+
+                pairs_completed += len(global_jobs)
+                episodes_completed += len(episode_chunk)
+                missing_pairs_in_chunk = sum(
+                    len(dense_result["missing_pair_indices"]) for dense_result in dense_delta_results
+                )
+                tracker.log_episode_chunk(
+                    episode_chunk_index=chunk_idx,
+                    total_episode_chunks=len(chunk_list),
+                    episodes_in_chunk=len(episode_chunk),
+                    pairs_in_chunk=len(global_jobs),
+                    missing_pairs_in_chunk=missing_pairs_in_chunk,
+                    manifest_rows=len(delta_manifest_rows),
+                    pairs_completed=pairs_completed,
+                    episodes_completed=episodes_completed,
+                )
+                tqdm.write(
+                    f"[chunk {chunk_idx}/{len(chunk_list)}] wrote_episodes={len(episode_chunk)}"
+                )
+        finally:
+            inference.close()
+
+        write_json(os.path.join(args.output_root, "meta", "info.json"), output_info)
+        write_jsonl(os.path.join(args.output_root, "meta", "episodes_stats.jsonl"), output_episode_stats_rows)
+        write_jsonl(os.path.join(args.output_root, "meta", "progress_sparse_predictions.jsonl"), delta_manifest_rows)
+        validate_output_dataset(
+            output_root=args.output_root,
+            episode_metas=episode_metas,
+            delta_feature_name=args.delta_feature_name,
+            verify_samples=args.verify_samples,
+        )
+
+        _print_block("backfill_done", [
+            ("output_root", args.output_root),
+            ("episodes", len(episode_metas)),
+            ("manifest_rows", len(delta_manifest_rows)),
+            ("verify_samples", args.verify_samples),
+        ])
+        tracker.log_finish(
+            status="completed",
+            manifest_rows=len(delta_manifest_rows),
+            pairs_completed=pairs_completed,
+            episodes_completed=episodes_completed,
+        )
+    except Exception as exc:
+        exit_code = 1
+        tracker.log_failure(
+            error_type=type(exc).__name__,
+            error_message=str(exc),
+            pairs_completed=pairs_completed,
+            episodes_completed=episodes_completed,
+        )
+        raise
     finally:
-        inference.close()
-
-    write_json(os.path.join(args.output_root, "meta", "info.json"), output_info)
-    write_jsonl(os.path.join(args.output_root, "meta", "episodes_stats.jsonl"), output_episode_stats_rows)
-    write_jsonl(os.path.join(args.output_root, "meta", "progress_sparse_predictions.jsonl"), delta_manifest_rows)
-    validate_output_dataset(
-        output_root=args.output_root,
-        episode_metas=episode_metas,
-        delta_feature_name=args.delta_feature_name,
-        verify_samples=args.verify_samples,
-    )
-
-    _print_block("backfill_done", [
-        ("output_root", args.output_root),
-        ("episodes", len(episode_metas)),
-        ("manifest_rows", len(delta_manifest_rows)),
-        ("verify_samples", args.verify_samples),
-    ])
+        tracker.finish(exit_code=exit_code)
 
 
 if __name__ == "__main__":
