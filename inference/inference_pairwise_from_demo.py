@@ -5,12 +5,55 @@ demo_path, i, j, reference_demo_path -> inference result
 import os
 import argparse
 import yaml
-from typing import List, Dict, Any, Optional
-from inferencer import DeltaProgressInference
+import random
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 from utils.data_formatting import build_qwen_messages, compute_delta_progress_label_int
 from utils.utils import list_image_files, dict_to_namespace
 from utils.frame_sampling import sample_reference_frames_from_demo
 from utils.prompt import build_prompt
+
+
+def sample_reference_demo_pack(
+    reference_demo_path: Optional[str],
+    reference_config,
+    rng: Optional[random.Random] = None,
+) -> Tuple[List[Any], List[int]]:
+    """采样并缓存 reference demo，用于跨多个 pair 复用。"""
+    if not reference_demo_path:
+        return [], []
+
+    return sample_reference_frames_from_demo(
+        avg_frames=reference_config.avg_frames,
+        min_frames=reference_config.frames_min,
+        max_frames=reference_config.frames_max,
+        std=reference_config.frames_std,
+        reference_demo_path=reference_demo_path,
+        reference_views=reference_config.views,
+        ref_jitter=reference_config.jitter,
+        rng=rng,
+    )
+
+
+def build_messages_from_inputs(
+    target_inputs_t1: Sequence[Any],
+    target_inputs_t2: Sequence[Any],
+    reference_inputs: Sequence[Any],
+    reference_progress_ints: Sequence[int],
+    reference_view_names: Sequence[str],
+    target_view_names: Sequence[str],
+    task_desc: str,
+) -> List[Dict[str, Any]]:
+    """根据预加载图像对象或路径直接构造 Qwen messages。"""
+    img_paths, human_str = build_prompt(
+        ref_img_paths=list(reference_inputs),
+        ref_progress_ints=list(reference_progress_ints),
+        target_img_paths_t1=list(target_inputs_t1),
+        target_img_paths_t2=list(target_inputs_t2),
+        reference_view_names=list(reference_view_names),
+        target_view_names=list(target_view_names),
+        task_desc=task_desc,
+    )
+    return build_qwen_messages(human_str, img_paths)
 
 
 def build_messages_from_demo(
@@ -48,33 +91,26 @@ def build_messages_from_demo(
         img_abs_2 = os.path.abspath(os.path.join(v_path, frame_j_name))
         target_paths_t1.append(img_abs_1)
         target_paths_t2.append(img_abs_2)
-    
 
-    ref_img_paths, ref_progress_ints = sample_reference_frames_from_demo(
-        avg_frames=reference_config.avg_frames,
-        min_frames=reference_config.frames_min,
-        max_frames=reference_config.frames_max,
-        std=reference_config.frames_std,
+    ref_inputs, ref_progress_ints = sample_reference_demo_pack(
         reference_demo_path=reference_demo_path,
-        reference_views=reference_config.views,
-        ref_jitter=reference_config.jitter,
+        reference_config=reference_config,
     )
-    
-    img_paths, human_str = build_prompt(
-        ref_img_paths=ref_img_paths,
-        ref_progress_ints=ref_progress_ints,
-        target_img_paths_t1=target_paths_t1,
-        target_img_paths_t2=target_paths_t2,
+
+    return build_messages_from_inputs(
+        target_inputs_t1=target_paths_t1,
+        target_inputs_t2=target_paths_t2,
+        reference_inputs=ref_inputs,
+        reference_progress_ints=ref_progress_ints,
         reference_view_names=reference_config.views,
         target_view_names=target_views,
         task_desc=task_desc,
     )
 
-    messages = build_qwen_messages(human_str, img_paths)
-    return messages
-
 
 def main():
+    from inferencer import DeltaProgressInference
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--base-model", type=str, default="models/Qwen-VL-2B-Instruct", help="基础模型路径")
     parser.add_argument("--adapter", type=str, required=True, help="LoRA适配器路径")

@@ -19,10 +19,10 @@ def build_qwen_data_sample(img_paths: List[str], human_str: str, answer: str) ->
     }
 
 
-def build_qwen_messages(human_str: str, img_paths: List[str]) -> List[Dict[str, Any]]:
+def build_qwen_messages(human_str: str, img_paths: List[Any]) -> List[Dict[str, Any]]:
     """
     (prompt, images) -> messsages
-    image paths are absolute paths
+    images can be absolute paths or pre-loaded PIL images
     """
     content = []
     parts = re.split(r'(<image>)', human_str)

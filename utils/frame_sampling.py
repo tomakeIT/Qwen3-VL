@@ -1,6 +1,6 @@
 import os
 import random
-from typing import List, Dict, Tuple, Optional
+from typing import Dict, List, Optional, Tuple
 from utils.utils import list_image_files
 from utils.data_formatting import compute_abs_progress_from_index_int
 
@@ -95,6 +95,7 @@ def sample_reference_frames_from_demo(
     reference_demo_path: str,
     reference_views: List[str],
     ref_jitter: int,
+    rng: Optional[random.Random] = None,
 ) -> Tuple[List[str], List[int]]:
     """
     从给定的 reference demo 路径中采样 reference frames
@@ -102,9 +103,16 @@ def sample_reference_frames_from_demo(
         (ref_img_paths, ref_progress_ints): 采样的图片路径列表和对应的进度整数列表
     """
 
-    def sample_num_ref_frames(mean_ref_frames: int, min_frames: int = 3, max_frames: int = 10, std: float = 2.0) -> int:
+    rng = rng or random
+
+    def sample_num_ref_frames(
+        mean_ref_frames: int,
+        min_frames: int = 3,
+        max_frames: int = 10,
+        std: float = 2.0,
+    ) -> int:
         """以 mean_ref_frames 为均值做一次高斯采样，得到本次实际使用的 reference time steps 数量"""
-        n = int(round(random.gauss(mean_ref_frames, std)))
+        n = int(round(rng.gauss(mean_ref_frames, std)))
         n = max(min_frames, min(max_frames, n))
         return n
 
@@ -135,7 +143,7 @@ def sample_reference_frames_from_demo(
     
     indices: List[int] = []
     for idx in base_indices:
-        offset = random.randint(-ref_jitter, ref_jitter) if ref_jitter > 0 else 0
+        offset = rng.randint(-ref_jitter, ref_jitter) if ref_jitter > 0 else 0
         j_idx = max(0, min(T_ref - 1, idx + offset))
         indices.append(j_idx)
     

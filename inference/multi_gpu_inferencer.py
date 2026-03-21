@@ -3,84 +3,60 @@
 自动将任务分配到多张 GPU 并行处理
 """
 
-import os
+import atexit
+import traceback
 import torch
 import torch.multiprocessing as mp
-from typing import List, Dict, Any, Optional, Tuple, Callable
+from typing import Any, Dict, List, Optional, Tuple
 from tqdm import tqdm
-import numpy as np
 
 from transformers import AutoModelForImageTextToText, AutoProcessor
 from peft import PeftModel
 from utils.data_formatting import parse_delta_progress_int
 
 
-def _init_worker(gpu_id, base_model_path, adapter_path):
-    """在每个 worker 进程中初始化模型（绑定到指定 GPU）"""
-    os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
-    
+def _load_model_and_processor(gpu_id: int, base_model_path: str, adapter_path: str):
+    """在指定 GPU 上加载模型和 processor。"""
+    torch.cuda.set_device(gpu_id)
+    device = f"cuda:{gpu_id}"
+
     print(f"[GPU {gpu_id}] 正在加载模型...")
     base_model = AutoModelForImageTextToText.from_pretrained(
         base_model_path,
         dtype="auto",
         attn_implementation="flash_attention_2",
-        device_map="auto",
-        trust_remote_code=True
+        device_map={"": device},
+        trust_remote_code=True,
     )
-    
+
     model = PeftModel.from_pretrained(base_model, adapter_path)
     model.eval()
-    
+
     processor = AutoProcessor.from_pretrained(base_model_path, trust_remote_code=True)
-    if hasattr(processor, 'tokenizer') and processor.tokenizer is not None:
-        processor.tokenizer.padding_side = 'left'
+    if hasattr(processor, "tokenizer") and processor.tokenizer is not None:
+        processor.tokenizer.padding_side = "left"
         if processor.tokenizer.pad_token_id is None:
             processor.tokenizer.pad_token_id = processor.tokenizer.eos_token_id
-    
+
     print(f"[GPU {gpu_id}] 模型加载完成！")
     return model, processor
 
 
-def _infer_batch_on_gpu(args):
-    """在指定 GPU 上批量推理
-    
-    Args:
-        args: (gpu_id, base_model_path, adapter_path, messages_list, max_new_tokens)
-    
-    Returns:
-        List[Optional[int]]: 预测结果列表
-    """
-    gpu_id, base_model_path, adapter_path, messages_list, batch_size, max_new_tokens = args
-    print(f"[GPU {gpu_id}] worker 启动，样本数={len(messages_list)}")
-
-    # 显式绑定到目标 GPU，避免多进程下 device_map="auto" 误分配到同一卡
-    torch.cuda.set_device(gpu_id)
-    device = f"cuda:{gpu_id}"
-
-    print(f"gpu {gpu_id}: loading base model...")
-    # 显式指定设备映射到当前 GPU
-    base_model = AutoModelForImageTextToText.from_pretrained(
-        base_model_path,
-        dtype="auto",
-        attn_implementation="flash_attention_2",
-        device_map={"": device},
-        trust_remote_code=True
-    )
-    
-    model = PeftModel.from_pretrained(base_model, adapter_path)
-    model.eval()
-    
-    processor = AutoProcessor.from_pretrained(base_model_path, trust_remote_code=True)
-    if hasattr(processor, 'tokenizer') and processor.tokenizer is not None:
-        processor.tokenizer.padding_side = 'left'
-        if processor.tokenizer.pad_token_id is None:
-            processor.tokenizer.pad_token_id = processor.tokenizer.eos_token_id
-    
+def _run_inference_batches(
+    model,
+    processor,
+    messages_list: List[List[Dict[str, Any]]],
+    batch_size: int,
+    max_new_tokens: int,
+    gpu_id: Optional[int] = None,
+) -> List[Optional[int]]:
+    """对单个 worker 分到的 messages 做分批推理。"""
     results = []
+    total_batches = (len(messages_list) + batch_size - 1) // batch_size
     with torch.no_grad():
-        # 在每个 GPU worker 内继续按 batch_size 切分，避免显存峰值过高
-        for i in range(0, len(messages_list), batch_size):
-            print(f"gpu {gpu_id}: inferring batch {i//batch_size +1}/{len(messages_list)//batch_size+1}...")
+        for batch_idx, i in enumerate(range(0, len(messages_list), batch_size), start=1):
+            if gpu_id is not None:
+                print(f"gpu {gpu_id}: inferring batch {batch_idx}/{total_batches}...")
             sub_batch = messages_list[i:i + batch_size]
             inputs = processor.apply_chat_template(
                 sub_batch,
@@ -88,7 +64,7 @@ def _infer_batch_on_gpu(args):
                 add_generation_prompt=True,
                 return_dict=True,
                 return_tensors="pt",
-                padding=True
+                padding=True,
             )
             inputs = inputs.to(model.device)
 
@@ -107,12 +83,47 @@ def _infer_batch_on_gpu(args):
             output_texts = processor.batch_decode(
                 generated_ids_trimmed,
                 skip_special_tokens=True,
-                clean_up_tokenization_spaces=False
+                clean_up_tokenization_spaces=False,
             )
 
             results.extend([parse_delta_progress_int(text) for text in output_texts])
-    
+
     return results
+
+
+def _gpu_worker_loop(
+    gpu_id: int,
+    base_model_path: str,
+    adapter_path: str,
+    task_queue,
+    result_queue,
+) -> None:
+    """持久化 worker：模型只加载一次，后续复用处理多个 chunk。"""
+    try:
+        model, processor = _load_model_and_processor(gpu_id, base_model_path, adapter_path)
+        result_queue.put(("__ready__", gpu_id, None, None))
+    except Exception:
+        result_queue.put(("__ready__", gpu_id, None, traceback.format_exc()))
+        return
+
+    while True:
+        payload = task_queue.get()
+        if payload is None:
+            break
+
+        request_id, messages_list, batch_size, max_new_tokens = payload
+        try:
+            results = _run_inference_batches(
+                model=model,
+                processor=processor,
+                messages_list=messages_list,
+                batch_size=batch_size,
+                max_new_tokens=max_new_tokens,
+                gpu_id=gpu_id,
+            )
+            result_queue.put((request_id, gpu_id, results, None))
+        except Exception:
+            result_queue.put((request_id, gpu_id, None, traceback.format_exc()))
 
 
 class MultiGPUDeltaProgressInference:
@@ -131,6 +142,13 @@ class MultiGPUDeltaProgressInference:
         """
         self.base_model_path = base_model_path
         self.adapter_path = adapter_path
+        self._ctx = mp.get_context("spawn")
+        self._task_queues = []
+        self._workers = []
+        self._result_queue = None
+        self._request_counter = 0
+        self._single_gpu_inference = None
+        self._closed = False
         
         available_gpus = torch.cuda.device_count()
         if available_gpus <= 0:
@@ -146,6 +164,34 @@ class MultiGPUDeltaProgressInference:
             f"MultiGPU Inference 初始化完成，将使用 {self.num_gpus}/{available_gpus} 张 GPU，"
             f"gpu_ids={self.gpu_ids}"
         )
+        if self.num_gpus > 1:
+            self._start_workers()
+        atexit.register(self.close)
+
+    def _start_workers(self) -> None:
+        """启动常驻 worker，让 chunked 推理避免重复加载模型。"""
+        self._result_queue = self._ctx.Queue()
+
+        for gpu_id in self.gpu_ids:
+            task_queue = self._ctx.Queue()
+            worker = self._ctx.Process(
+                target=_gpu_worker_loop,
+                args=(gpu_id, self.base_model_path, self.adapter_path, task_queue, self._result_queue),
+                daemon=True,
+            )
+            worker.start()
+            self._task_queues.append(task_queue)
+            self._workers.append(worker)
+
+        ready_gpus = set()
+        while len(ready_gpus) < len(self._workers):
+            tag, gpu_id, _, error = self._result_queue.get()
+            if tag != "__ready__":
+                continue
+            if error:
+                self.close()
+                raise RuntimeError(f"[GPU {gpu_id}] worker 初始化失败:\n{error}")
+            ready_gpus.add(gpu_id)
     
     def infer_from_messages_batch(
         self, 
@@ -169,39 +215,58 @@ class MultiGPUDeltaProgressInference:
         print(f"batch_size: {batch_size}")
         if len(messages_list) == 0:
             return []
-        
-        # 如果只有一条数据或少于 num_gpus，退化为单卡模式
-        if len(messages_list) < self.num_gpus or self.num_gpus == 1:
+
+        if self._closed:
+            raise RuntimeError("MultiGPUDeltaProgressInference 已关闭，不能继续推理")
+
+        if self.num_gpus == 1:
             return self._infer_single_gpu(messages_list, batch_size, max_new_tokens, desc)
-        
+
+        active_gpu_count = min(self.num_gpus, len(messages_list))
+        active_gpu_ids = self.gpu_ids[:active_gpu_count]
+
         # 将数据分配到各个 GPU
-        tasks_per_gpu = len(messages_list) // self.num_gpus
-        remainder = len(messages_list) % self.num_gpus
-        
+        tasks_per_gpu = len(messages_list) // active_gpu_count
+        remainder = len(messages_list) % active_gpu_count
+
         gpu_tasks = []
         start_idx = 0
-        for gpu_id in self.gpu_ids:
+        for gpu_id in active_gpu_ids:
             # 分配任务，多余的给前面的 GPU
             end_idx = start_idx + tasks_per_gpu + (1 if gpu_id < remainder else 0)
             sublist = messages_list[start_idx:end_idx]
             if len(sublist) > 0:
-                gpu_tasks.append((gpu_id, self.base_model_path, self.adapter_path, sublist, batch_size, max_new_tokens))
+                gpu_tasks.append((gpu_id, sublist))
             start_idx = end_idx
-        
-        # 使用进程池并行处理
-        ctx = mp.get_context('spawn')
-        with ctx.Pool(processes=len(gpu_tasks)) as pool:
-            results = list(tqdm(
-                pool.imap(_infer_batch_on_gpu, gpu_tasks),
-                total=len(gpu_tasks),
-                desc=f"{desc} (across {len(gpu_tasks)} GPUs)"
-            ))
-        
+
+        request_id = self._request_counter
+        self._request_counter += 1
+
+        for gpu_id, sublist in gpu_tasks:
+            self._task_queues[gpu_id].put((request_id, sublist, batch_size, max_new_tokens))
+
+        results_by_gpu: Dict[int, List[Optional[int]]] = {}
+        iterator = tqdm(
+            total=len(gpu_tasks),
+            desc=f"{desc} (across {len(gpu_tasks)} GPUs)",
+        )
+        while len(results_by_gpu) < len(gpu_tasks):
+            recv_request_id, gpu_id, results, error = self._result_queue.get()
+            if recv_request_id != request_id:
+                continue
+            if error:
+                iterator.close()
+                self.close()
+                raise RuntimeError(f"[GPU {gpu_id}] 推理失败:\n{error}")
+            results_by_gpu[gpu_id] = results
+            iterator.update(1)
+        iterator.close()
+
         # 合并结果（保持原始顺序）
         all_results = []
-        for r in results:
-            all_results.extend(r)
-        
+        for gpu_id, _ in gpu_tasks:
+            all_results.extend(results_by_gpu[gpu_id])
+
         return all_results
     
     def _infer_single_gpu(
@@ -213,18 +278,55 @@ class MultiGPUDeltaProgressInference:
     ) -> List[Optional[int]]:
         """单 GPU 推理（退化为原来的 DeltaProgressInference）"""
         from inferencer import DeltaProgressInference
-        
-        inference = DeltaProgressInference(self.base_model_path, self.adapter_path)
-        
+
+        if self._single_gpu_inference is None:
+            self._single_gpu_inference = DeltaProgressInference(self.base_model_path, self.adapter_path)
+
         results = []
         for i in tqdm(range(0, len(messages_list), batch_size), desc=desc):
             batch = messages_list[i:i + batch_size]
-            batch_results = inference.infer_from_messages_batch(batch, max_new_tokens)
+            batch_results = self._single_gpu_inference.infer_from_messages_batch(batch, max_new_tokens)
             results.extend(batch_results)
-        
+
         return results
     
     def infer_from_messages(self, messages: List[Dict[str, Any]], max_new_tokens: int = 128) -> Optional[int]:
         """单条推理（兼容单卡接口）"""
         results = self.infer_from_messages_batch([messages], batch_size=1, max_new_tokens=max_new_tokens)
         return results[0] if results else None
+
+    def close(self) -> None:
+        """关闭常驻 worker 进程。"""
+        if self._closed:
+            return
+
+        self._closed = True
+        for task_queue in self._task_queues:
+            try:
+                task_queue.put(None)
+            except Exception:
+                pass
+
+        for worker in self._workers:
+            worker.join(timeout=5)
+            if worker.is_alive():
+                worker.terminate()
+                worker.join(timeout=5)
+
+        for task_queue in self._task_queues:
+            try:
+                task_queue.close()
+            except Exception:
+                pass
+
+        if self._result_queue is not None:
+            try:
+                self._result_queue.close()
+            except Exception:
+                pass
+
+    def __del__(self):
+        try:
+            self.close()
+        except Exception:
+            pass

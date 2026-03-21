@@ -1,15 +1,15 @@
-from typing import List, Dict, Any, Tuple, Optional
+from typing import Any, List, Tuple
 
 def build_prompt(
-    ref_img_paths: List[str],
+    ref_img_paths: List[Any],
     ref_progress_ints: List[int],
-    target_img_paths_t1: List[str],
-    target_img_paths_t2: List[str],
+    target_img_paths_t1: List[Any],
+    target_img_paths_t2: List[Any],
     reference_view_names: List[str],
     target_view_names: List[str],
     task_desc: str,
-) -> Tuple[List[str], str]:
-    """构造一条 Qwen 风格样本"""
+) -> Tuple[List[Any], str]:
+    """构造一条 Qwen 风格样本，图片输入既可以是路径，也可以是预加载图像对象。"""
     human_prompt: List[str] = []
     human_prompt.append(
         "You are a robotic task progress evaluator.\n\n"
