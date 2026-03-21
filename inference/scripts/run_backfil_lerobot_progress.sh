@@ -1,16 +1,15 @@
 
-conda activate qwen
-
-ADAPTER=/
+ADAPTER="/home/jialeng/LightwheelData/checkpoint-success-6tasks"
+DATASET_ROOT="/home/jialeng/LightwheelDataFast/Robocasa_lerobot_6tasks"
+OUTPUT_ROOT="/home/jialeng/LightwheelDataFast/Robocasa_lerobot_6tasks_with_progress2"
+REFERENCE_MAP="/home/jialeng/Qwen3-VL/inference/data/6tasks_referece_map.json"
 
 python3 inference/backfill_lerobot_progress.py \
-    --adapter /path/to/checkpoint \
-    --dataset-root /home/jialeng/LightwheelData/Task_Robocasa_X7s_lerobot \
-    --output-root /path/to/Task_Robocasa_X7s_lerobot_with_progress \
-    --reference-map /path/to/reference_map.json \
-    --source-task-map /home/jialeng/LightwheelData/task_map.json \
+    --adapter $ADAPTER \
+    --dataset-root $DATASET_ROOT \
+    --output-root $OUTPUT_ROOT \
+    --reference-map $REFERENCE_MAP \
     --config dataset/configs/build_config_15tasks.yaml \
-    --pair-interval 50 \
     --num-gpus 6 \
     --batch-size 8 \
     --episode-chunk-size 4 \
