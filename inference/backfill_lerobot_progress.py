@@ -469,7 +469,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dataset-root", type=str, required=True, help="LeRobot v2.1 数据集根目录")
     parser.add_argument("--output-root", type=str, default=None, help="输出数据集根目录；dry-run 时可不传")
     parser.add_argument("--reference-map", type=str, required=True, help="任务描述到 reference demo 路径的 JSON/YAML 映射")
-    parser.add_argument("--config", type=str, required=True, help="训练/推理使用的 YAML 配置")
+    parser.add_argument("--config", type=str, default="dataset/configs/build_config_15tasks.yaml", help="训练/推理使用的 YAML 配置")
     parser.add_argument("--pair-interval", type=int, default=50, help="两次稀疏推理之间的帧间隔")
     parser.add_argument("--batch-size", type=int, default=8, help="每张 GPU 的子 batch 大小")
     parser.add_argument("--num-gpus", type=int, default=1, help="使用的 GPU 数量")
