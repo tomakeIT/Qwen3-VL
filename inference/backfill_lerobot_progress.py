@@ -34,21 +34,13 @@ from lerobot_io import (
     write_json,
     write_jsonl,
 )
-from utils.data_formatting import compute_abs_progress_from_index_int
 from utils.utils import dict_to_namespace
-from video_frame_reader import decode_video_frames, load_episode_frame_cache, probe_video_info
+from video_frame_reader import load_episode_frame_cache
 
 
 DEFAULT_CUMULATIVE_FEATURE = "prediction.progress_cumulative"
 DEFAULT_DELTA_FEATURE = "prediction.progress_delta"
-REFERENCE_VIEW_TO_VIDEO_FILE = {
-    "first_person_camera": "isaac_replay_state_first_person.mp4",
-    "left_hand_camera": "isaac_replay_state_left_hand.mp4",
-    "right_hand_camera": "isaac_replay_state_right_hand.mp4",
-    "left_shoulder_camera": "isaac_replay_state_left_shoulder.mp4",
-    "right_shoulder_camera": "isaac_replay_state_right_shoulder.mp4",
-    "top_view_camera": "isaac_replay_state_top.mp4",
-}
+TASK_MAP_CANDIDATE_FILES = ("task_descriptions.json", "task_map.json")
 
 
 def _load_mapping_file(path: str) -> Any:
@@ -60,48 +52,123 @@ def _load_mapping_file(path: str) -> Any:
 
 def load_reference_map(path: str) -> Dict[str, str]:
     payload = _load_mapping_file(path)
+    if not isinstance(payload, dict):
+        raise ValueError(
+            "reference_map 只支持一种格式：顶层字典，"
+            "形如 {\"ArrangeVegetables\": \"/abs/path/to/episode\", ...}"
+        )
 
-    if isinstance(payload, dict):
-        if "tasks" in payload and isinstance(payload["tasks"], dict):
-            payload = payload["tasks"]
-        elif "references" in payload and isinstance(payload["references"], dict):
-            payload = payload["references"]
-
-    if isinstance(payload, dict):
-        normalized: Dict[str, str] = {}
-        for task_desc, value in payload.items():
-            if isinstance(value, str):
-                normalized[str(task_desc)] = value
-                continue
-            if isinstance(value, dict):
-                reference_path = (
-                    value.get("reference_demo")
-                    or value.get("reference_demo_path")
-                    or value.get("path")
-                )
-                if isinstance(reference_path, str):
-                    normalized[str(task_desc)] = reference_path
-                    continue
-            raise ValueError(f"无法解析 reference map 条目: {task_desc} -> {value}")
-        return normalized
-
-    if isinstance(payload, list):
-        normalized = {}
-        for item in payload:
-            if not isinstance(item, dict):
-                raise ValueError(f"reference map 列表项必须是字典，当前为: {item}")
-            task_desc = item.get("task") or item.get("task_desc")
-            reference_path = (
-                item.get("reference_demo")
-                or item.get("reference_demo_path")
-                or item.get("path")
+    normalized: Dict[str, str] = {}
+    for task_name, reference_path in payload.items():
+        if not isinstance(task_name, str) or not isinstance(reference_path, str):
+            raise ValueError(
+                "reference_map 的每一项都必须是字符串到字符串，"
+                f"当前为: {task_name} -> {reference_path}"
             )
-            if not isinstance(task_desc, str) or not isinstance(reference_path, str):
-                raise ValueError(f"reference map 列表项缺少 task/path: {item}")
-            normalized[task_desc] = reference_path
-        return normalized
+        normalized[task_name] = reference_path
+    return normalized
 
-    raise ValueError(f"不支持的 reference map 格式: {type(payload)}")
+
+def load_task_description_map(path: str) -> Dict[str, str]:
+    payload = _load_mapping_file(path)
+    if not isinstance(payload, dict):
+        raise ValueError(f"任务映射文件必须是 JSON/YAML 字典: {path}")
+
+    normalized: Dict[str, str] = {}
+    for task_name, task_desc in payload.items():
+        if not isinstance(task_name, str) or not isinstance(task_desc, str):
+            raise ValueError(f"任务映射项必须是字符串到字符串: {task_name} -> {task_desc}")
+        normalized[task_name] = task_desc
+    return normalized
+
+
+def _iter_parent_dirs(path: str) -> Iterable[str]:
+    current = os.path.abspath(path)
+    if os.path.isfile(current):
+        current = os.path.dirname(current)
+
+    while True:
+        yield current
+        parent = os.path.dirname(current)
+        if parent == current:
+            break
+        current = parent
+
+
+def auto_discover_task_description_map(reference_paths: Sequence[str]) -> Tuple[Optional[str], Optional[Dict[str, str]]]:
+    seen_candidates = set()
+    for reference_path in reference_paths:
+        for parent_dir in _iter_parent_dirs(reference_path):
+            for candidate_name in TASK_MAP_CANDIDATE_FILES:
+                candidate_path = os.path.join(parent_dir, candidate_name)
+                if candidate_path in seen_candidates:
+                    continue
+                seen_candidates.add(candidate_path)
+                if not os.path.exists(candidate_path):
+                    continue
+                try:
+                    task_map = load_task_description_map(candidate_path)
+                except Exception:
+                    continue
+                if len(task_map) > 0:
+                    return candidate_path, task_map
+
+    return None, None
+
+
+def resolve_reference_map_by_task_desc(
+    raw_reference_map: Mapping[str, str],
+    target_task_descs: Sequence[str],
+    source_task_map: Optional[Mapping[str, str]] = None,
+) -> Dict[str, str]:
+    target_task_desc_set = set(target_task_descs)
+    resolved_reference_map: Dict[str, str] = {}
+    if not source_task_map:
+        raise ValueError(
+            "reference_map 现在只支持 `task_name -> reference_demo_path` 格式，"
+            "因此必须提供或自动发现 source task map。"
+        )
+
+    task_desc_to_name = {task_desc: task_name for task_name, task_desc in source_task_map.items()}
+
+    for task_name, reference_path in raw_reference_map.items():
+        if task_name not in source_task_map:
+            raise KeyError(
+                f"reference_map 中的 task_name `{task_name}` 不在 source task map 里。"
+            )
+        resolved_task_desc = source_task_map[task_name]
+        if resolved_task_desc not in target_task_desc_set:
+            continue
+        if resolved_task_desc in resolved_reference_map and resolved_reference_map[resolved_task_desc] != reference_path:
+            raise ValueError(
+                f"reference map 对任务 `{resolved_task_desc}` 解析出多个路径: "
+                f"{resolved_reference_map[resolved_task_desc]} vs {reference_path}"
+            )
+        resolved_reference_map[resolved_task_desc] = reference_path
+
+    missing_task_descs = sorted(target_task_desc_set - set(resolved_reference_map.keys()))
+    if missing_task_descs:
+        available_keys = sorted(raw_reference_map.keys())
+        alias_pairs = [
+            f"{task_name} -> {task_desc}"
+            for task_name, task_desc in sorted(source_task_map.items())
+            if task_desc in missing_task_descs or task_desc in target_task_desc_set
+        ]
+        alias_hint = ""
+        if alias_pairs:
+            alias_hint = "；可用 task_name 映射示例: " + ", ".join(alias_pairs[:8])
+        raise KeyError(
+            "reference_map 缺少以下任务的映射: "
+            + ", ".join(missing_task_descs)
+            + f"。当前 reference_map keys: {available_keys}"
+            + alias_hint
+        )
+
+    for task_desc, reference_path in resolved_reference_map.items():
+        task_name = task_desc_to_name.get(task_desc, "<unknown>")
+        print(f"reference 任务匹配: {task_name} -> {task_desc} -> {reference_path}")
+
+    return resolved_reference_map
 
 
 def build_anchor_pairs(total_frames: int, pair_interval: int) -> Tuple[List[int], List[Tuple[int, int]], np.ndarray]:
@@ -126,100 +193,11 @@ def chunked(seq: Sequence[Any], chunk_size: int) -> Iterable[Sequence[Any]]:
         yield seq[start_idx:start_idx + chunk_size]
 
 
-def _sample_reference_indices(
-    total_frames: int,
-    avg_frames: int,
-    min_frames: int,
-    max_frames: int,
-    std: float,
-    jitter: int,
-    rng: random.Random,
-) -> List[int]:
-    if total_frames <= 0:
-        return []
-
-    num_ref_frames = int(round(rng.gauss(avg_frames, std)))
-    num_ref_frames = max(min_frames, min(max_frames, num_ref_frames))
-
-    if total_frames <= num_ref_frames:
-        base_indices = list(range(total_frames))
-    else:
-        base_indices = [
-            int(round(i * (total_frames - 1) / (num_ref_frames - 1)))
-            for i in range(num_ref_frames)
-        ]
-
-    indices: List[int] = []
-    for index in base_indices:
-        offset = rng.randint(-jitter, jitter) if jitter > 0 else 0
-        indices.append(max(0, min(total_frames - 1, index + offset)))
-
-    return sorted(set(indices))
-
-
-def sample_reference_video_pack(
-    reference_demo_path: str,
-    reference_config,
-    rng: random.Random,
-    ffmpeg_bin: str,
-    ffprobe_bin: str,
-) -> Tuple[List[Any], List[int]]:
-    reference_views = list(reference_config.views)
-    video_infos = {}
-    for reference_view in reference_views:
-        video_file_name = REFERENCE_VIEW_TO_VIDEO_FILE.get(reference_view)
-        if video_file_name is None:
-            raise KeyError(f"reference 视角 `{reference_view}` 没有对应的视频文件名映射")
-        video_path = os.path.join(reference_demo_path, video_file_name)
-        if not os.path.exists(video_path):
-            raise FileNotFoundError(f"reference 视频不存在: {video_path}")
-        video_infos[reference_view] = {
-            "video_path": video_path,
-            "info": probe_video_info(video_path, ffprobe_bin=ffprobe_bin),
-        }
-
-    total_frames = min(item["info"]["total_frames"] for item in video_infos.values())
-    sampled_indices = _sample_reference_indices(
-        total_frames=total_frames,
-        avg_frames=reference_config.avg_frames,
-        min_frames=reference_config.frames_min,
-        max_frames=reference_config.frames_max,
-        std=reference_config.frames_std,
-        jitter=reference_config.jitter,
-        rng=rng,
-    )
-
-    reference_progress_ints = [
-        compute_abs_progress_from_index_int(frame_index, total_frames)
-        for frame_index in sampled_indices
-    ]
-
-    view_to_frames = {}
-    for reference_view in reference_views:
-        info = video_infos[reference_view]["info"]
-        view_to_frames[reference_view] = decode_video_frames(
-            video_path=video_infos[reference_view]["video_path"],
-            frame_indices=sampled_indices,
-            width=info["width"],
-            height=info["height"],
-            ffmpeg_bin=ffmpeg_bin,
-        )
-
-    reference_inputs: List[Any] = []
-    for frame_index in sampled_indices:
-        for reference_view in reference_views:
-            reference_inputs.append(view_to_frames[reference_view][frame_index])
-
-    return reference_inputs, reference_progress_ints
-
-
 def build_reference_packs(
     task_descs: Sequence[str],
     reference_map: Mapping[str, str],
     reference_config,
     seed: int,
-    ffmpeg_bin: str,
-    ffprobe_bin: str,
 ) -> Dict[str, Dict[str, Any]]:
     reference_packs: Dict[str, Dict[str, Any]] = {}
     for task_offset, task_desc in enumerate(sorted(set(task_descs))):
@@ -230,23 +208,23 @@ def build_reference_packs(
             raise FileNotFoundError(f"reference demo 不存在: {reference_demo_path}")
 
         rng = random.Random(seed + task_offset)
-        if all(
-            os.path.isdir(os.path.join(reference_demo_path, reference_view))
+        missing_reference_views = [
+            reference_view
             for reference_view in reference_config.views
-        ):
-            reference_inputs, reference_progress_ints = sample_reference_demo_pack(
-                reference_demo_path=reference_demo_path,
-                reference_config=reference_config,
-                rng=rng,
+            if not os.path.isdir(os.path.join(reference_demo_path, reference_view))
+        ]
+        if missing_reference_views:
+            raise FileNotFoundError(
+                "reference demo 必须是图片切分版目录结构，缺少以下视角目录: "
+                + ", ".join(missing_reference_views)
+                + f"；reference_demo_path={reference_demo_path}"
             )
-        else:
-            reference_inputs, reference_progress_ints = sample_reference_video_pack(
-                reference_demo_path=reference_demo_path,
-                reference_config=reference_config,
-                rng=rng,
-                ffmpeg_bin=ffmpeg_bin,
-                ffprobe_bin=ffprobe_bin,
-            )
+
+        reference_inputs, reference_progress_ints = sample_reference_demo_pack(
+            reference_demo_path=reference_demo_path,
+            reference_config=reference_config,
+            rng=rng,
+        )
         if len(reference_inputs) == 0:
             raise RuntimeError(f"reference demo 采样为空: task={task_desc}, path={reference_demo_path}")
 
@@ -468,7 +446,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--adapter", type=str, required=True)
     parser.add_argument("--dataset-root", type=str, required=True, help="LeRobot v2.1 数据集根目录")
     parser.add_argument("--output-root", type=str, default=None, help="输出数据集根目录；dry-run 时可不传")
-    parser.add_argument("--reference-map", type=str, required=True, help="任务描述到 reference demo 路径的 JSON/YAML 映射")
+    parser.add_argument(
+        "--reference-map",
+        type=str,
+        required=True,
+        help="reference demo 路径映射；只支持 {task_name: reference_demo_path} 这一种格式",
+    )
+    parser.add_argument(
+        "--source-task-map",
+        type=str,
+        default=None,
+        help="可选：源数据集的 task_name -> task_description 映射文件；不传则尝试从 reference 路径祖先目录自动发现",
+    )
     parser.add_argument("--config", type=str, default="dataset/configs/build_config_15tasks.yaml", help="训练/推理使用的 YAML 配置")
     parser.add_argument("--pair-interval", type=int, default=50, help="两次稀疏推理之间的帧间隔")
     parser.add_argument("--batch-size", type=int, default=8, help="每张 GPU 的子 batch 大小")
@@ -478,7 +467,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--episode-chunk-size", type=int, default=4, help="每次处理多少个 episode，控制解码和内存峰值")
     parser.add_argument("--ffmpeg-workers", type=int, default=6, help="单个 episode 内并行解码多少路视频")
     parser.add_argument("--ffmpeg-bin", type=str, default="ffmpeg")
-    parser.add_argument("--ffprobe-bin", type=str, default="ffprobe")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--cumulative-feature-name", type=str, default=DEFAULT_CUMULATIVE_FEATURE)
     parser.add_argument("--delta-feature-name", type=str, default=DEFAULT_DELTA_FEATURE)
@@ -517,14 +505,32 @@ def main(args: argparse.Namespace) -> None:
     if args.limit_episodes is not None:
         episode_records = episode_records[:args.limit_episodes]
 
-    reference_map = load_reference_map(args.reference_map)
+    raw_reference_map = load_reference_map(args.reference_map)
+    source_task_map = None
+    source_task_map_path = None
+    if args.source_task_map:
+        source_task_map_path = args.source_task_map
+        source_task_map = load_task_description_map(args.source_task_map)
+    else:
+        source_task_map_path, source_task_map = auto_discover_task_description_map(
+            list(raw_reference_map.values())
+        )
+
+    if source_task_map_path:
+        print(f"已加载 source task map: {source_task_map_path}")
+    else:
+        print("未自动发现 source task map，后续会要求 reference_map 的 task_name 必须能通过 --source-task-map 解析")
+
+    reference_map = resolve_reference_map_by_task_desc(
+        raw_reference_map=raw_reference_map,
+        target_task_descs=[episode_record.task_desc for episode_record in episode_records],
+        source_task_map=source_task_map,
+    )
     reference_packs = build_reference_packs(
         task_descs=[episode_record.task_desc for episode_record in episode_records],
         reference_map=reference_map,
         reference_config=config.reference,
         seed=args.seed,
-        ffmpeg_bin=args.ffmpeg_bin,
-        ffprobe_bin=args.ffprobe_bin,
     )
 
     episode_metas: List[Dict[str, Any]] = []
