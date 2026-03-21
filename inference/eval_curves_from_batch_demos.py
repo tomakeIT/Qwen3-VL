@@ -347,76 +347,131 @@ def evaluate_curves(
     }, all_curves
 
 
-def main(args):
+def load_demo_list_from_json(path: str) -> List[Any]:
+    """读取与 CLI 相同格式的 demo 列表 JSON（顶层含 eval 字典）。"""
+    with open(path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    return list(data["eval"].values())
 
-    # 加载配置
-    with open(args.config, "r", encoding="utf-8") as f:
+
+def save_progress_curves_plot(
+    all_curves: List[Tuple[np.ndarray, np.ndarray, int]],
+    plot_path: str,
+) -> None:
+    if not all_curves:
+        return
+    plt.figure(figsize=(12, 8))
+    for frame_indices, progress_values, T in all_curves:
+        normalized_frames = (
+            (frame_indices - frame_indices[0]) / (frame_indices[-1] - frame_indices[0])
+            if len(frame_indices) > 1 and frame_indices[-1] != frame_indices[0]
+            else np.linspace(0, 1, len(frame_indices))
+        )
+        plt.plot(normalized_frames, progress_values, alpha=0.6, linewidth=1, label=f"T={T}")
+    plt.xlabel("Normalized Frame Index")
+    plt.ylabel("Progress (%)")
+    plt.title(f"All Progress Curves (n={len(all_curves)})")
+    plt.legend(loc="best", fontsize=8, ncol=2)
+    plt.grid(True, alpha=0.3)
+    plt.savefig(plot_path, dpi=150, bbox_inches="tight")
+    plt.close()
+    print(f"\n所有curve图已保存到: {plot_path}")
+
+
+def run_eval_curves_from_batch_demos(
+    base_model: str,
+    adapter: str,
+    config_path: str,
+    task_desc: str,
+    reference_demo: Optional[str],
+    *,
+    demo_list: Optional[List[Any]] = None,
+    demo_list_path: Optional[str] = None,
+    step_interval: int = 1,
+    start_frame: int = 0,
+    end_frame: Optional[int] = None,
+    batch_size: int = 1,
+    num_gpus: int = 1,
+    global_build_workers: int = 16,
+    output_json: Optional[str] = None,
+    plot_output: Optional[str] = None,
+) -> Tuple[Dict[str, float], List[Tuple[np.ndarray, np.ndarray, int]]]:
+    """加载配置、构建推理器、跑 evaluate_curves，并可选保存曲线图与指标 JSON。
+
+    ``demo_list`` 与 ``demo_list_path`` 二选一：前者为内存中的列表（与 JSON 中 ``eval`` 的值列表同格式），后者为磁盘上的 JSON 路径。
+    """
+    if demo_list is None:
+        if not demo_list_path:
+            raise ValueError("demo_list 与 demo_list_path 必须提供其一")
+        print(f"正在加载demo列表: {demo_list_path}")
+        demo_list = load_demo_list_from_json(demo_list_path)
+    else:
+        demo_list = list(demo_list)
+
+    print(f"共 {len(demo_list)} 个demo")
+
+    with open(config_path, "r", encoding="utf-8") as f:
         config_dict = yaml.safe_load(f)
     config = dict_to_namespace(config_dict)
-    
-    # 加载demo列表
-    print(f"正在加载demo列表: {args.demo_list}")
-    with open(args.demo_list, "r", encoding="utf-8") as f:
-        demo_list = json.load(f)
 
-    demo_list = list(demo_list["eval"].values())
-    
-    print(f"共 {len(demo_list)} 个demo")
-    
-    # 初始化推理器（自动处理单/多 GPU）
     inference = MultiGPUDeltaProgressInference(
-        base_model_path=args.base_model,
-        adapter_path=args.adapter,
-        num_gpus=args.num_gpus,
+        base_model_path=base_model,
+        adapter_path=adapter,
+        num_gpus=num_gpus,
     )
-    
-    # 批量推理并计算指标
+
     target_views = config.sampling.required_views
     metrics, all_curves = evaluate_curves(
         inference=inference,
         demo_list=demo_list,
-        reference_demo_path=args.reference_demo,
-        task_desc=args.task_desc,
+        reference_demo_path=reference_demo,
+        task_desc=task_desc,
         target_views=target_views,
         reference_config=config.reference,
+        step_interval=step_interval,
+        start_frame=start_frame,
+        end_frame=end_frame,
+        batch_size=batch_size,
+        global_build_workers=global_build_workers,
+    )
+
+    plot_path = plot_output if plot_output else "all_curves.png"
+    save_progress_curves_plot(all_curves, plot_path)
+
+    print("\n" + "=" * 50)
+    print("评估结果:")
+    print(f"有效demo数量: {metrics['num_valid_demos']}")
+    print(f"Pearson Correlation: {metrics['pearson']:.4f}")
+    print(f"Spearman Correlation: {metrics['spearman']:.4f}")
+    print(f"Normalized Total Variation: {metrics['norm_total_variation']:.4f}")
+    print(f"Monotonicity Rate: {metrics['monotonicity_rate']:.4f}")
+    print("=" * 50)
+
+    if output_json:
+        with open(output_json, "w", encoding="utf-8") as f:
+            json.dump(metrics, f, indent=2, ensure_ascii=False)
+        print(f"\n结果已保存到: {output_json}")
+
+    return metrics, all_curves
+
+
+def main(args: argparse.Namespace) -> None:
+    run_eval_curves_from_batch_demos(
+        base_model=args.base_model,
+        adapter=args.adapter,
+        config_path=args.config,
+        task_desc=args.task_desc,
+        reference_demo=args.reference_demo,
+        demo_list_path=args.demo_list,
         step_interval=args.step_interval,
         start_frame=args.start_frame,
         end_frame=args.end_frame,
         batch_size=args.batch_size,
+        num_gpus=args.num_gpus,
         global_build_workers=args.global_build_workers,
+        output_json=args.output,
+        plot_output=args.plot_output,
     )
-    
-    # 绘制所有curve
-    if all_curves:
-        plt.figure(figsize=(12, 8))
-        for frame_indices, progress_values, T in all_curves:
-            normalized_frames = (frame_indices - frame_indices[0]) / (frame_indices[-1] - frame_indices[0]) if len(frame_indices) > 1 and frame_indices[-1] != frame_indices[0] else np.linspace(0, 1, len(frame_indices))
-            plt.plot(normalized_frames, progress_values, alpha=0.6, linewidth=1, label=f"T={T}")
-        plt.xlabel("Normalized Frame Index")
-        plt.ylabel("Progress (%)")
-        plt.title(f"All Progress Curves (n={len(all_curves)})")
-        plt.legend(loc='best', fontsize=8, ncol=2)
-        plt.grid(True, alpha=0.3)
-        plot_path = args.plot_output if args.plot_output else "all_curves.png"
-        plt.savefig(plot_path, dpi=150, bbox_inches="tight")
-        plt.close()
-        print(f"\n所有curve图已保存到: {plot_path}")
-    
-    # 打印结果
-    print("\n" + "="*50)
-    print("评估结果:")
-    print(f"有效demo数量: {metrics['num_valid_demos']}")
-    print(f"Qwen3-VL/inference/eval_curves_from_batch_demos.py: {metrics['pearson']:.4f}")
-    print(f"Spearman Correlation: {metrics['spearman']:.4f}")
-    print(f"Normalized Total Variation: {metrics['norm_total_variation']:.4f}")
-    print(f"Monotonicity Rate: {metrics['monotonicity_rate']:.4f}")
-    print("="*50)
-    
-    # 可选：保存结果
-    if args.output:
-        with open(args.output, "w", encoding="utf-8") as f:
-            json.dump(metrics, f, indent=2, ensure_ascii=False)
-        print(f"\n结果已保存到: {args.output}")
 
 
 if __name__ == "__main__":
@@ -434,7 +489,7 @@ if __name__ == "__main__":
     parser.add_argument("--plot-output", type=str, default="./curves.png", help="可选：保存curve图路径")
     parser.add_argument("--batch-size", type=int, default=1, help="每个demo内部的推理batch大小，大于1时加速推理")
     parser.add_argument("--num-gpus", type=int, default=1, help="使用的GPU数量（默认1，设为-1使用所有可用GPU）")
-    parser.add_argument("--global-build-workers", type=int, default=1, help="构建messages的线程数（global模式生效）")
+    parser.add_argument("--global-build-workers", type=int, default=16, help="构建messages的线程数（global模式生效）")
     args = parser.parse_args()
     
     main(args)

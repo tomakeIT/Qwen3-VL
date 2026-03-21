@@ -39,7 +39,8 @@ from qwenvl.train.argument import (
     DataArguments,
     TrainingArguments,
 )
-from transformers import AutoProcessor, Trainer
+from qwenvl.train.wandb_checkpoint_callback import WandbCheckpointUploadCallback
+from transformers import AutoProcessor, Trainer, TrainerCallback
 
 local_rank = None
 
@@ -47,6 +48,21 @@ local_rank = None
 def rank0_print(*args):
     if local_rank == 0:
         print(*args)
+
+
+class OverrideSaveStepsOnResumeCallback(TrainerCallback):
+    """Force save cadence to follow current args when resuming."""
+
+    def on_train_begin(self, args, state, control, **kwargs):
+        if args.save_strategy == "steps" and args.save_steps is not None:
+            if state.save_steps != args.save_steps:
+                logging.info(
+                    "Override resumed save_steps: %s -> %s",
+                    state.save_steps,
+                    args.save_steps,
+                )
+                state.save_steps = args.save_steps
+        return control
 
 
 def safe_save_model_for_hf_trainer(trainer: transformers.Trainer, output_dir: str):
@@ -184,8 +200,12 @@ def train(attn_implementation="flash_attention_2"):
             model.model.print_trainable_parameters()
     
     data_module = make_supervised_data_module(processor, data_args=data_args)
+    callbacks = [OverrideSaveStepsOnResumeCallback()]
+    if training_args.wandb_upload_checkpoints:
+        callbacks.append(WandbCheckpointUploadCallback(training_args))
+
     trainer = Trainer(
-        model=model, processing_class=tokenizer, args=training_args, **data_module
+        model=model, processing_class=tokenizer, args=training_args, callbacks=callbacks, **data_module
     )
 
     if list(pathlib.Path(training_args.output_dir).glob("checkpoint-*")):

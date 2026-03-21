@@ -43,3 +43,9 @@ class TrainingArguments(transformers.TrainingArguments):
     lora_r: int = field(default=64)
     lora_alpha: int = field(default=128)
     lora_dropout: float = field(default=0.0)
+
+    ## W&B checkpoint upload config
+    wandb_upload_checkpoints: bool = field(default=False)
+    wandb_checkpoint_artifact_name: Optional[str] = field(default=None)
+    wandb_checkpoint_keep_last_n: int = field(default=1)
+    wandb_checkpoint_upload_async: bool = field(default=True)

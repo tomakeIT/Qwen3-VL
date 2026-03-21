@@ -10,13 +10,13 @@ BASE_MODEL="models/Qwen-VL-2B-Instruct"
 
 # LoRA 适配器路径（请修改为你训练好的模型路径）
 # 示例: ADAPTER="qwen-vl-finetune/output/checkpoint-10000"
-ADAPTER=/home/erdao.liang/Qwen3-VL/qwen-vl-finetune/output/lerobot_Robocasa_X7s_H800_arange_veg_lora_newdata/checkpoint-900
+ADAPTER=/home/jialeng/Qwen3-VL/qwen-vl-finetune/output/lerobot_Robocasa_X7s_6tasks_RTX6000/checkpoint-3300
 
 # demo list JSON 文件路径（包含要评估的验证集 demo 列表）
-DEMO_LIST="inference/data/demo_list_arrange_vegetables_eval_2.json"
+DEMO_LIST="inference/data/demo_list_arrange_vegetables_train_2.json"
 
 # reference demo 路径（从训练集中选一个作为 reference）
-REFERENCE_DEMO="/home/erdao.liang/LightwheelData/slowdata/1W_Robocasa_X7s_More/ArrangeVegetables/ArrangeVegetables_1762240854119666"
+REFERENCE_DEMO="/home/jialeng/LightwheelData/1W_Robocasa_X7s_More/ArrangeVegetables/ArrangeVegetables_1762240854119666"
 
 # 任务描述
 TASK_DESC="Put the vegetables on the cutting board"
@@ -35,13 +35,13 @@ START_FRAME=0
 BATCH_SIZE=32
 
 # 输出结果保存路径
-OUTPUT="outputs/eval_arrange_vegetables_results_3.json"
+OUTPUT="outputs/eval_arrange_vegetables_results_4.json"
 
 # 曲线图保存路径
-PLOT_OUTPUT="outputs/eval_arrange_vegetables_curves_3.png"
+PLOT_OUTPUT="outputs/eval_arrange_vegetables_curves_4.png"
 
 # 使用的GPU数量
-NUM_GPUS=4
+NUM_GPUS=6
 
 # ============================================================================
 
@@ -65,6 +65,7 @@ python3 inference/eval_curves_from_batch_demos.py \
     --output "$OUTPUT" \
     --plot-output "$PLOT_OUTPUT" \
     --num-gpus "$NUM_GPUS"
+
 
 echo ""
 echo "=========================================="
