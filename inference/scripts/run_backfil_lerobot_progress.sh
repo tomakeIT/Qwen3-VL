@@ -16,6 +16,5 @@ python3 -m inference.backfill \
     --num-gpus 6 \
     --batch-size 8 \
     --episode-chunk-size 4 \
-    --message-chunk-size 128 \
     --wandb \
     --wandb-run-name $RUN_NAME

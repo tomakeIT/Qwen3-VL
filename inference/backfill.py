@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import cProfile
 import os
+import pstats
 import random
 import time
 from functools import partial
@@ -52,7 +54,6 @@ class BackfillWandbTracker:
         run_name: Optional[str],
         group: Optional[str],
         tags: Optional[Sequence[str]],
-        log_interval: int,
         total_episodes: int,
         total_pairs: int,
         total_tasks: int,
@@ -62,7 +63,6 @@ class BackfillWandbTracker:
         self.total_episodes = int(total_episodes)
         self.total_pairs = int(total_pairs)
         self.total_tasks = int(total_tasks)
-        self.log_interval = max(1, int(log_interval))
         self._start_time = time.time()
         self._wandb = None
         self._run = None
@@ -85,7 +85,6 @@ class BackfillWandbTracker:
             "batch_size": args.batch_size,
             "num_gpus": args.num_gpus,
             "episode_chunk_size": args.episode_chunk_size,
-            "message_chunk_size": args.message_chunk_size,
             "ffmpeg_workers": args.ffmpeg_workers,
             "global_build_workers": args.global_build_workers,
             "seed": args.seed,
@@ -172,37 +171,6 @@ class BackfillWandbTracker:
             "status/event": "dry_run",
             **{f"dry_run/{key}": value for key, value in dry_run_stats.items()},
             **self._progress_payload(pairs_completed=0, episodes_completed=0),
-        })
-
-    def log_message_chunk(
-        self,
-        *,
-        episode_chunk_index: int,
-        total_episode_chunks: int,
-        message_chunk_index: int,
-        total_message_chunks: int,
-        pairs_in_message_chunk: int,
-        pairs_in_episode_chunk: int,
-        pairs_completed: int,
-        episodes_completed: int,
-    ) -> None:
-        if not self.enabled:
-            return
-        if message_chunk_index != 1 and message_chunk_index != total_message_chunks:
-            if message_chunk_index % self.log_interval != 0:
-                return
-        self._log({
-            "status/event": "message_chunk",
-            "chunk/episode_chunk_index": int(episode_chunk_index),
-            "chunk/episode_chunks_total": int(total_episode_chunks),
-            "chunk/message_chunk_index": int(message_chunk_index),
-            "chunk/message_chunks_total": int(total_message_chunks),
-            "chunk/pairs_in_message_chunk": int(pairs_in_message_chunk),
-            "chunk/pairs_in_episode_chunk": int(pairs_in_episode_chunk),
-            **self._progress_payload(
-                pairs_completed=pairs_completed,
-                episodes_completed=episodes_completed,
-            ),
         })
 
     def log_episode_chunk(
@@ -458,12 +426,12 @@ def decode_episode_chunk(
 ) -> Dict[int, Dict[str, Dict[int, Any]]]:
     frame_caches: Dict[int, Dict[str, Dict[int, Any]]] = {}
     for episode_meta in tqdm(episode_metas, desc="解码 episode 帧"):
-        if episode_meta["num_pairs"] == 0:
+        total_frames = int(episode_meta["T"])
+        if total_frames <= 0:
             continue
-        required_frames = sorted({frame_idx for pair in episode_meta["ij_pairs"] for frame_idx in pair})
         frame_caches[episode_meta["episode_id"]] = load_episode_frame_cache(
             video_sources=episode_meta["video_sources"],
-            frame_indices=required_frames,
+            frame_indices=list(range(total_frames)),
             ffmpeg_workers=ffmpeg_workers,
             prefer_image_cache=prefer_image_cache,
             ffmpeg_bin=ffmpeg_bin,
@@ -507,13 +475,7 @@ def infer_dense_delta_predictions(
     ffmpeg_bin: str,
     batch_size: int,
     global_build_workers: int,
-    message_chunk_size: Optional[int],
     desc: str,
-    tracker: Optional[BackfillWandbTracker] = None,
-    episode_chunk_index: int = 0,
-    total_episode_chunks: int = 0,
-    pairs_completed_before: int = 0,
-    episodes_completed_before: int = 0,
 ) -> Dict[int, List[Optional[int]]]:
     episode_predictions: Dict[int, List[Optional[int]]] = {
         meta["episode_id"]: [None] * meta["num_pairs"] for meta in episode_metas
@@ -521,64 +483,33 @@ def infer_dense_delta_predictions(
     if len(global_jobs) == 0:
         return episode_predictions
 
-    if message_chunk_size is None or message_chunk_size <= 0:
-        message_chunk_size = len(global_jobs)
+    frame_caches = decode_episode_chunk(
+        episode_metas=episode_metas,
+        ffmpeg_workers=ffmpeg_workers,
+        prefer_image_cache=prefer_image_cache,
+        ffmpeg_bin=ffmpeg_bin,
+    )
+    build_message_fn = partial(
+        build_lerobot_job_message,
+        frame_caches=frame_caches,
+        reference_packs=reference_packs,
+        target_views=target_views,
+    )
+    all_meta, all_messages = build_messages_for_job_chunk(
+        jobs=global_jobs,
+        build_message_fn=build_message_fn,
+        global_build_workers=global_build_workers,
+    )
+    if len(all_messages) == 0:
+        return episode_predictions
 
-    total_chunks = (len(global_jobs) + message_chunk_size - 1) // message_chunk_size
-    episode_meta_by_id = {meta["episode_id"]: meta for meta in episode_metas}
-
-    for chunk_idx, start_idx in enumerate(range(0, len(global_jobs), message_chunk_size), start=1):
-        end_idx = min(start_idx + message_chunk_size, len(global_jobs))
-        job_chunk = list(global_jobs[start_idx:end_idx])
-
-        required_frames_by_episode: Dict[int, set[int]] = {}
-        for job in job_chunk:
-            required_frames_by_episode.setdefault(job["episode_id"], set()).update((job["i"], job["j"]))
-
-        frame_caches: Dict[int, Dict[str, Dict[int, Any]]] = {}
-        for episode_id, required_frames in required_frames_by_episode.items():
-            episode_meta = episode_meta_by_id[episode_id]
-            frame_caches[episode_id] = load_episode_frame_cache(
-                video_sources=episode_meta["video_sources"],
-                frame_indices=sorted(required_frames),
-                ffmpeg_workers=ffmpeg_workers,
-                prefer_image_cache=prefer_image_cache,
-                ffmpeg_bin=ffmpeg_bin,
-            )
-
-        build_message_fn = partial(
-            build_lerobot_job_message,
-            frame_caches=frame_caches,
-            reference_packs=reference_packs,
-            target_views=target_views,
-        )
-        all_meta, all_messages = build_messages_for_job_chunk(
-            jobs=job_chunk,
-            build_message_fn=build_message_fn,
-            global_build_workers=global_build_workers,
-        )
-        if len(all_messages) == 0:
-            continue
-
-        chunk_desc = desc if total_chunks == 1 else f"{desc} {chunk_idx}/{total_chunks}"
-        all_predictions = inference.infer_from_messages_batch(
-            all_messages,
-            batch_size=batch_size,
-            desc=chunk_desc,
-        )
-        for (episode_id, pair_idx), pred in zip(all_meta, all_predictions):
-            episode_predictions[episode_id][pair_idx] = pred
-        if tracker is not None:
-            tracker.log_message_chunk(
-                episode_chunk_index=episode_chunk_index,
-                total_episode_chunks=total_episode_chunks,
-                message_chunk_index=chunk_idx,
-                total_message_chunks=total_chunks,
-                pairs_in_message_chunk=len(job_chunk),
-                pairs_in_episode_chunk=len(global_jobs),
-                pairs_completed=pairs_completed_before + end_idx,
-                episodes_completed=episodes_completed_before,
-            )
+    all_predictions = inference.infer_from_messages_batch(
+        all_messages,
+        batch_size=batch_size,
+        desc=desc,
+    )
+    for (episode_id, pair_idx), pred in zip(all_meta, all_predictions):
+        episode_predictions[episode_id][pair_idx] = pred
     return episode_predictions
 
 
@@ -776,6 +707,57 @@ def run_dry_run(
     return payload
 
 
+def _emit_profile_report(
+    profiler: cProfile.Profile,
+    *,
+    profile_output: Optional[str],
+    sort_key: str,
+    top_k: int,
+) -> None:
+    if profile_output:
+        output_dir = os.path.dirname(profile_output)
+        if output_dir:
+            os.makedirs(output_dir, exist_ok=True)
+        profiler.dump_stats(profile_output)
+
+    stats = pstats.Stats(profiler)
+    stats.calc_callees()
+    filtered_rows: List[Tuple[str, int, int, float, float]] = []
+    current_file = os.path.abspath(__file__)
+    for (file_name, line_no, func_name), stat in stats.stats.items():
+        if os.path.abspath(file_name) != current_file:
+            continue
+        primitive_calls, total_calls, total_time, cumulative_time, _ = stat
+        filtered_rows.append((
+            func_name,
+            int(primitive_calls),
+            int(total_calls),
+            float(total_time),
+            float(cumulative_time),
+        ))
+
+    sort_key = sort_key.lower()
+    if sort_key not in {"cumulative", "time"}:
+        raise ValueError(f"不支持的 --profile-sort: {sort_key}")
+
+    sort_index = 4 if sort_key == "cumulative" else 3
+    filtered_rows.sort(key=lambda row: row[sort_index], reverse=True)
+    filtered_rows = filtered_rows[: max(1, int(top_k))]
+
+    _print_block("profile", [
+        ("scope", "backfill.py"),
+        ("sort", sort_key),
+        ("top_k", len(filtered_rows)),
+        ("stats_file", profile_output or "<not-saved>"),
+    ])
+    for func_name, primitive_calls, total_calls, total_time, cumulative_time in filtered_rows:
+        print(
+            "  "
+            f"{func_name}: primitive_calls={primitive_calls}, total_calls={total_calls}, "
+            f"self_time={total_time:.3f}s, cumulative_time={cumulative_time:.3f}s"
+        )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="对 LeRobot v2.1 数据集回填 dense delta progress")
     parser.add_argument("--base-model", type=str, default="models/Qwen-VL-2B-Instruct")
@@ -799,8 +781,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--batch-size", type=int, default=8, help="每张 GPU 的子 batch 大小")
     parser.add_argument("--num-gpus", type=int, default=1, help="使用的 GPU 数量")
     parser.add_argument("--global-build-workers", type=int, default=8, help="构建 Qwen messages 的线程数")
-    parser.add_argument("--message-chunk-size", type=int, default=128, help="每次送入推理的 message 数量")
-    parser.add_argument("--episode-chunk-size", type=int, default=1, help="每次处理多少个 episode")
+    parser.add_argument("--episode-chunk-size", type=int, default=1, help="每次处理多少个 episode，并在 chunk 内整体构造 messages")
     parser.add_argument("--ffmpeg-workers", type=int, default=6, help="单个 episode 内并行解码多少路视频")
     parser.add_argument("--ffmpeg-bin", type=str, default="ffmpeg")
     parser.add_argument("--seed", type=int, default=42)
@@ -814,11 +795,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--wandb-run-name", type=str, default=None, help="W&B run name")
     parser.add_argument("--wandb-group", type=str, default=None, help="W&B group")
     parser.add_argument("--wandb-tags", nargs="*", default=None, help="W&B tags")
-    parser.add_argument("--wandb-log-interval", type=int, default=1, help="每隔多少个 message chunk 记录一次 W&B 进度")
+    parser.add_argument("--profile", action="store_true", help="启用最基础的 cProfile profiling")
+    parser.add_argument("--profile-output", type=str, default=None, help="可选：保存 .prof stats 文件路径")
+    parser.add_argument("--profile-sort", type=str, default="cumulative", help="profile 排序方式：cumulative 或 time")
+    parser.add_argument("--profile-top-k", type=int, default=20, help="终端打印多少条 backfill.py 内部 profiling 结果")
     return parser
 
 
-def main(args: argparse.Namespace) -> None:
+def _run_backfill(args: argparse.Namespace) -> None:
     if args.limit_episodes is not None and not args.dry_run:
         raise ValueError("--limit-episodes 仅支持与 --dry-run 一起使用，避免生成不完整数据集")
     if not args.dry_run and not args.output_root:
@@ -897,7 +881,7 @@ def main(args: argparse.Namespace) -> None:
         ("batch_size", args.batch_size),
         ("num_gpus", args.num_gpus),
         ("episode_chunk_size", args.episode_chunk_size),
-        ("message_chunk_size", args.message_chunk_size),
+        ("frame_loading", "full_episode"),
         ("image_cache", not args.no_image_cache),
         ("view_mapping", view_mapping),
     ])
@@ -917,7 +901,6 @@ def main(args: argparse.Namespace) -> None:
         run_name=args.wandb_run_name,
         group=args.wandb_group,
         tags=args.wandb_tags,
-        log_interval=args.wandb_log_interval,
         total_episodes=len(episode_metas),
         total_pairs=total_pairs,
         total_tasks=num_tasks,
@@ -1005,13 +988,7 @@ def main(args: argparse.Namespace) -> None:
                     ffmpeg_bin=args.ffmpeg_bin,
                     batch_size=args.batch_size,
                     global_build_workers=args.global_build_workers,
-                    message_chunk_size=args.message_chunk_size,
                     desc="LeRobot dense delta inference",
-                    tracker=tracker,
-                    episode_chunk_index=chunk_idx,
-                    total_episode_chunks=len(chunk_list),
-                    pairs_completed_before=pairs_completed,
-                    episodes_completed_before=episodes_completed,
                 )
                 dense_delta_results = build_dense_delta_results(
                     episode_metas=episode_chunk,
@@ -1129,6 +1106,25 @@ def main(args: argparse.Namespace) -> None:
         raise
     finally:
         tracker.finish(exit_code=exit_code)
+
+
+def main(args: argparse.Namespace) -> None:
+    if not args.profile:
+        _run_backfill(args)
+        return
+
+    profiler = cProfile.Profile()
+    try:
+        profiler.enable()
+        _run_backfill(args)
+    finally:
+        profiler.disable()
+        _emit_profile_report(
+            profiler,
+            profile_output=args.profile_output,
+            sort_key=args.profile_sort,
+            top_k=args.profile_top_k,
+        )
 
 
 if __name__ == "__main__":
