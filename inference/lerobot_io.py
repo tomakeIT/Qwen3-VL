@@ -210,7 +210,7 @@ def load_lerobot_episodes(
             video_sources[target_view] = LeRobotVideoSource(
                 target_view=target_view,
                 video_key=video_key,
-                image_dir=image_dir if os.path.isdir(image_dir) else None,
+                image_dir=image_dir,
             )
 
         episodes.append(
