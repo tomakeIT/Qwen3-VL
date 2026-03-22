@@ -5,7 +5,7 @@ OUTPUT_ROOT="/home/jialeng/LightwheelDataFast/Robocasa_lerobot_6tasks_with_progr
 REFERENCE_MAP="/home/jialeng/Qwen3-VL/inference/data/6tasks_referece_map.json"
 RUN_NAME="lerobot_backfill_6tasks"
 
-export WANDB_PROJECT="${WANDB_PROJECT:-qwen3vl-rewardmodel}"
+export WANDB_PROJECT="qwen3vl-rewardmodel"
 
 python3 -m inference.backfill \
     --adapter $ADAPTER \
