@@ -16,25 +16,18 @@ def resolve_frame_path(image_dir: str, frame_index: int) -> str:
     return os.path.join(image_dir, frame_file_name(frame_index))
 
 
-def load_episode_frame_paths(
+def load_episode_image_dirs(
     video_sources: Dict[str, LeRobotVideoSource],
-    frame_indices: Sequence[int],
-) -> Dict[str, Dict[int, str]]:
-    frame_paths: Dict[str, Dict[int, str]] = {}
-    unique_indices = sorted({int(frame_index) for frame_index in frame_indices})
+) -> Dict[str, str]:
+    image_dirs: Dict[str, str] = {}
     for target_view, video_source in video_sources.items():
-        if not video_source.image_dir:
+        image_dir = video_source.image_dir
+        if not image_dir or not os.path.isdir(image_dir):
             raise FileNotFoundError(
-                f"缺少预处理后的 images 目录: target_view={target_view}, video_path={video_source.video_path}"
+                f"缺少预处理后的 images 目录: target_view={target_view}, image_dir={image_dir}"
             )
-        target_view_paths: Dict[int, str] = {}
-        for frame_index in unique_indices:
-            frame_path = resolve_frame_path(video_source.image_dir, frame_index)
-            if not os.path.isfile(frame_path):
-                raise FileNotFoundError(frame_path)
-            target_view_paths[frame_index] = frame_path
-        frame_paths[target_view] = target_view_paths
-    return frame_paths
+        image_dirs[target_view] = image_dir
+    return image_dirs
 
 
 def _load_frames_from_image_cache(

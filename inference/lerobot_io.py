@@ -21,10 +21,7 @@ DEFAULT_TARGET_VIEW_TO_VIDEO_KEY: Dict[str, str] = {
 class LeRobotVideoSource:
     target_view: str
     video_key: str
-    video_path: str
     image_dir: Optional[str]
-    height: int
-    width: int
 
 
 @dataclass
@@ -145,9 +142,12 @@ def resolve_episode_video_path(
 
 
 def resolve_episode_image_dir(dataset_root: str, video_path: str) -> str:
-    rel_video_path = os.path.relpath(video_path, dataset_root)
-    if rel_video_path.startswith(".."):
-        raise ValueError(f"video_path 不在 dataset_root 下: dataset_root={dataset_root}, video_path={video_path}")
+    if os.path.isabs(video_path):
+        rel_video_path = os.path.relpath(video_path, dataset_root)
+        if rel_video_path.startswith(".."):
+            raise ValueError(f"video_path 不在 dataset_root 下: dataset_root={dataset_root}, video_path={video_path}")
+    else:
+        rel_video_path = video_path
 
     video_root, ext = os.path.splitext(rel_video_path)
     if ext.lower() != ".mp4":
@@ -158,6 +158,20 @@ def resolve_episode_image_dir(dataset_root: str, video_path: str) -> str:
         raise ValueError(f"video_path 必须位于 videos/ 下，当前为: {video_path}")
     rel_parts[0] = "images"
     return os.path.join(dataset_root, *rel_parts)
+
+
+def resolve_episode_image_dir_from_video_key(
+    dataset_root: str,
+    info: Mapping[str, Any],
+    episode_index: int,
+    video_key: str,
+) -> str:
+    rel_video_path = info["video_path"].format(
+        episode_chunk=resolve_episode_chunk(info, episode_index),
+        episode_index=episode_index,
+        video_key=video_key,
+    )
+    return resolve_episode_image_dir(dataset_root, rel_video_path)
 
 
 def load_lerobot_episodes(
@@ -187,19 +201,16 @@ def load_lerobot_episodes(
 
         video_sources: Dict[str, LeRobotVideoSource] = {}
         for target_view, video_key in view_mapping.items():
-            feature = info["features"][video_key]
-            shape = feature.get("shape", [])
-            if len(shape) < 2:
-                raise ValueError(f"视频特征 `{video_key}` 缺少有效 shape: {shape}")
-            video_path = resolve_episode_video_path(dataset_root, info, episode_index, video_key)
-            image_dir = resolve_episode_image_dir(dataset_root, video_path)
+            image_dir = resolve_episode_image_dir_from_video_key(
+                dataset_root=dataset_root,
+                info=info,
+                episode_index=episode_index,
+                video_key=video_key,
+            )
             video_sources[target_view] = LeRobotVideoSource(
                 target_view=target_view,
                 video_key=video_key,
-                video_path=video_path,
                 image_dir=image_dir if os.path.isdir(image_dir) else None,
-                height=int(shape[0]),
-                width=int(shape[1]),
             )
 
         episodes.append(

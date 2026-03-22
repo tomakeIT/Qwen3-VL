@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import cProfile
+import json
 import os
 import random
 import time
@@ -32,7 +33,7 @@ from inference.lerobot_io import (
     write_json,
     write_jsonl,
 )
-from inference.video_frame_reader import load_episode_frame_paths
+from inference.video_frame_reader import load_episode_image_dirs, resolve_frame_path
 
 DELTA_FEATURE_NAME = "prediction.progress_delta"
 TASK_MAP_CANDIDATE_FILES = ("task_descriptions.json", "task_map.json")
@@ -355,17 +356,15 @@ def resolve_reference_map_by_task_desc(
     return resolved_reference_map
 
 
-def build_dense_window_pairs(total_frames: int, pair_interval: int) -> Tuple[List[Tuple[int, int]], np.ndarray]:
+def build_dense_window_pairs(total_frames: int, pair_interval: int) -> List[Tuple[int, int]]:
     if total_frames <= 0:
-        return [], np.array([], dtype=np.int64)
+        return []
     if pair_interval <= 0:
         raise ValueError(f"pair_interval 必须为正整数，当前为 {pair_interval}")
     if total_frames <= pair_interval:
-        return [], np.array([], dtype=np.int64)
+        return []
 
-    pair_indices = [(i, i + pair_interval) for i in range(0, total_frames - pair_interval)]
-    frame_indices = np.array([i for i, _ in pair_indices], dtype=np.int64)
-    return pair_indices, frame_indices
+    return [(i, i + pair_interval) for i in range(0, total_frames - pair_interval)]
 
 
 def chunked(seq: Sequence[Any], chunk_size: int) -> Iterable[Sequence[Any]]:
@@ -417,34 +416,30 @@ def build_reference_packs(
     return reference_packs
 
 
-def build_episode_frame_paths(
+def build_episode_image_dirs(
     episode_metas: Sequence[Dict[str, Any]],
-) -> Dict[int, Dict[str, Dict[int, str]]]:
-    frame_paths_by_episode: Dict[int, Dict[str, Dict[int, str]]] = {}
-    for episode_meta in tqdm(episode_metas, desc="解析 episode 帧路径"):
-        total_frames = int(episode_meta["T"])
-        if total_frames <= 0:
-            continue
-        frame_paths_by_episode[episode_meta["episode_id"]] = load_episode_frame_paths(
+) -> Dict[int, Dict[str, str]]:
+    image_dirs_by_episode: Dict[int, Dict[str, str]] = {}
+    for episode_meta in tqdm(episode_metas, desc="解析 episode 图片目录"):
+        image_dirs_by_episode[episode_meta["episode_id"]] = load_episode_image_dirs(
             video_sources=episode_meta["video_sources"],
-            frame_indices=list(range(total_frames)),
         )
-    return frame_paths_by_episode
+    return image_dirs_by_episode
 
 
 def build_lerobot_job_message(
     job: Dict[str, Any],
-    frame_paths_by_episode: Mapping[int, Dict[str, Dict[int, str]]],
+    image_dirs_by_episode: Mapping[int, Dict[str, str]],
     reference_packs: Mapping[str, Dict[str, Any]],
     target_views: Sequence[str],
 ) -> Tuple[int, int, List[Dict[str, Any]]]:
     episode_id = job["episode_id"]
     task_desc = job["task_desc"]
-    frame_paths = frame_paths_by_episode[episode_id]
+    image_dirs = image_dirs_by_episode[episode_id]
     reference_pack = reference_packs[task_desc]
 
-    target_inputs_t1 = [frame_paths[target_view][job["i"]] for target_view in target_views]
-    target_inputs_t2 = [frame_paths[target_view][job["j"]] for target_view in target_views]
+    target_inputs_t1 = [resolve_frame_path(image_dirs[target_view], job["i"]) for target_view in target_views]
+    target_inputs_t2 = [resolve_frame_path(image_dirs[target_view], job["j"]) for target_view in target_views]
     messages = build_messages_from_inputs(
         target_inputs_t1=target_inputs_t1,
         target_inputs_t2=target_inputs_t2,
@@ -473,10 +468,10 @@ def infer_dense_delta_predictions(
     if len(global_jobs) == 0:
         return episode_predictions
 
-    frame_paths_by_episode = build_episode_frame_paths(episode_metas=episode_metas)
+    image_dirs_by_episode = build_episode_image_dirs(episode_metas=episode_metas)
     build_message_fn = partial(
         build_lerobot_job_message,
-        frame_paths_by_episode=frame_paths_by_episode,
+        image_dirs_by_episode=image_dirs_by_episode,
         reference_packs=reference_packs,
         target_views=target_views,
     )
@@ -556,7 +551,7 @@ def build_dense_delta_results(
             "pair_offset": episode_meta["pair_offset"],
             "pair_indices": pair_indices_valid,
             "frame_indices": list(range(episode_meta["T"])),
-            "delta_progress": dense_delta.tolist(),
+            "delta_progress": dense_delta,
             "missing_pair_indices": missing_pair_indices,
         })
     return dense_results
@@ -607,6 +602,13 @@ def write_augmented_parquet(
     pq.write_table(table, output_path, compression="snappy")
 
 
+def append_jsonl_rows(path: str, rows: Iterable[Dict[str, Any]]) -> None:
+    ensure_parent_dir(path)
+    with open(path, "a", encoding="utf-8") as f:
+        for row in rows:
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
 def validate_output_dataset(
     output_root: str,
     episode_metas: Sequence[Dict[str, Any]],
@@ -645,7 +647,7 @@ def run_dry_run(
         return payload
 
     first_chunk = list(episode_metas)
-    frame_paths_by_episode = build_episode_frame_paths(episode_metas=first_chunk)
+    image_dirs_by_episode = build_episode_image_dirs(episode_metas=first_chunk)
 
     sample_job = None
     for episode_meta in first_chunk:
@@ -665,7 +667,7 @@ def run_dry_run(
     if sample_job is not None:
         _, _, messages = build_lerobot_job_message(
             sample_job,
-            frame_paths_by_episode=frame_paths_by_episode,
+            image_dirs_by_episode=image_dirs_by_episode,
             reference_packs=reference_packs,
             target_views=target_views,
         )
@@ -749,12 +751,15 @@ def _run_backfill(args: argparse.Namespace) -> None:
         dataset_root=args.dataset_root,
         target_views=target_views,
     )
-    orphan_paths = find_orphan_episode_files(
-        dataset_root=args.dataset_root,
-        valid_episode_indices=[episode_record.episode_index for episode_record in episode_records],
-    )
     if args.limit_episodes is not None:
         episode_records = episode_records[:args.limit_episodes]
+    if args.dry_run or args.limit_episodes is not None:
+        orphan_paths: List[str] = []
+    else:
+        orphan_paths = find_orphan_episode_files(
+            dataset_root=args.dataset_root,
+            valid_episode_indices=[episode_record.episode_index for episode_record in episode_records],
+        )
 
     raw_reference_map = load_reference_map(args.reference_map)
     source_task_map = None
@@ -779,7 +784,7 @@ def _run_backfill(args: argparse.Namespace) -> None:
 
     episode_metas: List[Dict[str, Any]] = []
     for episode_id, episode_record in enumerate(episode_records):
-        pair_indices, frame_indices = build_dense_window_pairs(
+        pair_indices = build_dense_window_pairs(
             total_frames=episode_record.length,
             pair_interval=args.pair_interval,
         )
@@ -791,12 +796,10 @@ def _run_backfill(args: argparse.Namespace) -> None:
             "parquet_path": episode_record.parquet_path,
             "video_sources": episode_record.video_sources,
             "reference_demo_path": reference_packs[episode_record.task_desc]["reference_demo_path"],
-            "frame_indices": frame_indices,
             "ij_pairs": pair_indices,
             "num_pairs": len(pair_indices),
             "pair_offset": args.pair_interval,
             "T": episode_record.length,
-            "target_demo_path": f"episode_{episode_record.episode_index:06d}",
         })
 
     num_tasks = len({episode_record.task_desc for episode_record in episode_records})
@@ -877,8 +880,11 @@ def _run_backfill(args: argparse.Namespace) -> None:
 
         existing_stats_rows = load_lerobot_episode_stats_rows(args.dataset_root)
         existing_stats_by_episode = {int(row["episode_index"]): row for row in existing_stats_rows}
-        output_episode_stats_rows: List[Dict[str, Any]] = []
-        delta_manifest_rows: List[Dict[str, Any]] = []
+        output_stats_path = os.path.join(args.output_root, "meta", "episodes_stats.jsonl")
+        delta_manifest_path = os.path.join(args.output_root, "meta", "progress_sparse_predictions.jsonl")
+        write_jsonl(output_stats_path, [])
+        write_jsonl(delta_manifest_path, [])
+        manifest_rows_written = 0
 
         from inference.multi_gpu_inferencer import MultiGPUDeltaProgressInference
 
@@ -923,6 +929,8 @@ def _run_backfill(args: argparse.Namespace) -> None:
                 dense_result_by_episode_id = {
                     dense_result["episode_id"]: dense_result for dense_result in dense_delta_results
                 }
+                chunk_output_stats_rows: List[Dict[str, Any]] = []
+                chunk_delta_manifest_rows: List[Dict[str, Any]] = []
 
                 for episode_meta in episode_chunk:
                     dense_result = dense_result_by_episode_id.get(episode_meta["episode_id"])
@@ -935,7 +943,7 @@ def _run_backfill(args: argparse.Namespace) -> None:
                             "total_frames": episode_meta["T"],
                             "pair_offset": episode_meta["pair_offset"],
                             "pair_indices": [],
-                            "delta_progress": dense_delta.tolist(),
+                            "delta_progress": dense_delta,
                             "missing_pair_indices": episode_meta["ij_pairs"],
                             "frame_indices": list(range(episode_meta["T"])),
                         }
@@ -963,9 +971,9 @@ def _run_backfill(args: argparse.Namespace) -> None:
                         "stats": dict(base_stats_row.get("stats", {})),
                     }
                     output_stats_row["stats"][DELTA_FEATURE_NAME] = compute_scalar_stats(dense_delta)
-                    output_episode_stats_rows.append(output_stats_row)
+                    chunk_output_stats_rows.append(output_stats_row)
 
-                    delta_manifest_rows.append({
+                    chunk_delta_manifest_rows.append({
                         "episode_index": dense_result["episode_index"],
                         "task_desc": dense_result["task_desc"],
                         "reference_demo_path": dense_result["reference_demo_path"],
@@ -973,9 +981,13 @@ def _run_backfill(args: argparse.Namespace) -> None:
                         "pair_offset": dense_result["pair_offset"],
                         "pair_indices": [list(pair) for pair in dense_result["pair_indices"]],
                         "frame_indices": list(dense_result["frame_indices"]),
-                        "delta_progress": list(dense_result["delta_progress"]),
+                        "delta_progress": dense_delta.tolist(),
                         "missing_pair_indices": [list(pair) for pair in dense_result["missing_pair_indices"]],
                     })
+
+                append_jsonl_rows(output_stats_path, chunk_output_stats_rows)
+                append_jsonl_rows(delta_manifest_path, chunk_delta_manifest_rows)
+                manifest_rows_written += len(chunk_delta_manifest_rows)
 
                 pairs_completed += len(global_jobs)
                 episodes_completed += len(episode_chunk)
@@ -988,7 +1000,7 @@ def _run_backfill(args: argparse.Namespace) -> None:
                     episodes_in_chunk=len(episode_chunk),
                     pairs_in_chunk=len(global_jobs),
                     missing_pairs_in_chunk=missing_pairs_in_chunk,
-                    manifest_rows=len(delta_manifest_rows),
+                    manifest_rows=manifest_rows_written,
                     pairs_completed=pairs_completed,
                     episodes_completed=episodes_completed,
                 )
@@ -999,8 +1011,6 @@ def _run_backfill(args: argparse.Namespace) -> None:
             inference.close()
 
         write_json(os.path.join(args.output_root, "meta", "info.json"), output_info)
-        write_jsonl(os.path.join(args.output_root, "meta", "episodes_stats.jsonl"), output_episode_stats_rows)
-        write_jsonl(os.path.join(args.output_root, "meta", "progress_sparse_predictions.jsonl"), delta_manifest_rows)
         validate_output_dataset(
             output_root=args.output_root,
             episode_metas=episode_metas,
@@ -1011,12 +1021,12 @@ def _run_backfill(args: argparse.Namespace) -> None:
         _print_block("backfill_done", [
             ("output_root", args.output_root),
             ("episodes", len(episode_metas)),
-            ("manifest_rows", len(delta_manifest_rows)),
+            ("manifest_rows", manifest_rows_written),
             ("verify_samples", args.verify_samples),
         ])
         tracker.log_finish(
             status="completed",
-            manifest_rows=len(delta_manifest_rows),
+            manifest_rows=manifest_rows_written,
             pairs_completed=pairs_completed,
             episodes_completed=episodes_completed,
         )
