@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import cProfile
 import os
-import pstats
 import random
 import time
 from functools import partial
@@ -35,7 +34,8 @@ from inference.lerobot_io import (
 )
 from inference.video_frame_reader import load_episode_frame_cache
 
-DEFAULT_DELTA_FEATURE = "prediction.progress_delta"
+DELTA_FEATURE_NAME = "prediction.progress_delta"
+FFMPEG_BIN = "ffmpeg"
 TASK_MAP_CANDIDATE_FILES = ("task_descriptions.json", "task_map.json")
 
 
@@ -89,7 +89,7 @@ class BackfillWandbTracker:
             "global_build_workers": args.global_build_workers,
             "seed": args.seed,
             "dry_run": args.dry_run,
-            "delta_feature_name": args.delta_feature_name,
+            "delta_feature_name": DELTA_FEATURE_NAME,
             "total_episodes": self.total_episodes,
             "total_pairs": self.total_pairs,
             "total_tasks": self.total_tasks,
@@ -707,55 +707,15 @@ def run_dry_run(
     return payload
 
 
-def _emit_profile_report(
+def _dump_profile_stats(
     profiler: cProfile.Profile,
     *,
-    profile_output: Optional[str],
-    sort_key: str,
-    top_k: int,
+    profile_output: str,
 ) -> None:
-    if profile_output:
-        output_dir = os.path.dirname(profile_output)
-        if output_dir:
-            os.makedirs(output_dir, exist_ok=True)
-        profiler.dump_stats(profile_output)
-
-    stats = pstats.Stats(profiler)
-    stats.calc_callees()
-    filtered_rows: List[Tuple[str, int, int, float, float]] = []
-    current_file = os.path.abspath(__file__)
-    for (file_name, line_no, func_name), stat in stats.stats.items():
-        if os.path.abspath(file_name) != current_file:
-            continue
-        primitive_calls, total_calls, total_time, cumulative_time, _ = stat
-        filtered_rows.append((
-            func_name,
-            int(primitive_calls),
-            int(total_calls),
-            float(total_time),
-            float(cumulative_time),
-        ))
-
-    sort_key = sort_key.lower()
-    if sort_key not in {"cumulative", "time"}:
-        raise ValueError(f"不支持的 --profile-sort: {sort_key}")
-
-    sort_index = 4 if sort_key == "cumulative" else 3
-    filtered_rows.sort(key=lambda row: row[sort_index], reverse=True)
-    filtered_rows = filtered_rows[: max(1, int(top_k))]
-
-    _print_block("profile", [
-        ("scope", "backfill.py"),
-        ("sort", sort_key),
-        ("top_k", len(filtered_rows)),
-        ("stats_file", profile_output or "<not-saved>"),
-    ])
-    for func_name, primitive_calls, total_calls, total_time, cumulative_time in filtered_rows:
-        print(
-            "  "
-            f"{func_name}: primitive_calls={primitive_calls}, total_calls={total_calls}, "
-            f"self_time={total_time:.3f}s, cumulative_time={cumulative_time:.3f}s"
-        )
+    output_dir = os.path.dirname(profile_output)
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
+    profiler.dump_stats(profile_output)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -783,28 +743,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--global-build-workers", type=int, default=8, help="构建 Qwen messages 的线程数")
     parser.add_argument("--episode-chunk-size", type=int, default=1, help="每次处理多少个 episode，并在 chunk 内整体构造 messages")
     parser.add_argument("--ffmpeg-workers", type=int, default=6, help="单个 episode 内并行解码多少路视频")
-    parser.add_argument("--ffmpeg-bin", type=str, default="ffmpeg")
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--delta-feature-name", type=str, default=DEFAULT_DELTA_FEATURE)
     parser.add_argument("--dry-run", action="store_true", help="只校验路径/解码/message 构造，不加载模型、不写文件")
-    parser.add_argument("--limit-episodes", type=int, default=None, help="仅与 --dry-run 配合，用于快速抽样校验")
-    parser.add_argument("--no-image-cache", action="store_true", help="禁用 images/ cache，强制从视频解码")
+    parser.add_argument("--limit-episodes", type=int, default=None, help="可选：仅处理前若干个 episode")
     parser.add_argument("--verify-samples", type=int, default=3, help="写回完成后随机校验的 parquet 数量")
-    parser.add_argument("--wandb", action="store_true", help="启用 Weights & Biases 进度跟踪")
-    parser.add_argument("--wandb-project", type=str, default=os.environ.get("WANDB_PROJECT"), help="W&B project 名称")
+    parser.add_argument("--wandb-project", type=str, default=os.environ.get("WANDB_PROJECT"), help="W&B project 名称；传入或设置环境变量即启用")
     parser.add_argument("--wandb-run-name", type=str, default=None, help="W&B run name")
-    parser.add_argument("--wandb-group", type=str, default=None, help="W&B group")
-    parser.add_argument("--wandb-tags", nargs="*", default=None, help="W&B tags")
-    parser.add_argument("--profile", action="store_true", help="启用最基础的 cProfile profiling")
-    parser.add_argument("--profile-output", type=str, default=None, help="可选：保存 .prof stats 文件路径")
-    parser.add_argument("--profile-sort", type=str, default="cumulative", help="profile 排序方式：cumulative 或 time")
-    parser.add_argument("--profile-top-k", type=int, default=20, help="终端打印多少条 backfill.py 内部 profiling 结果")
+    parser.add_argument("--profile-output", type=str, default=None, help="可选：保存 cProfile stats 文件路径，传入即启用 profiling")
     return parser
 
 
 def _run_backfill(args: argparse.Namespace) -> None:
-    if args.limit_episodes is not None and not args.dry_run:
-        raise ValueError("--limit-episodes 仅支持与 --dry-run 一起使用，避免生成不完整数据集")
     if not args.dry_run and not args.output_root:
         raise ValueError("非 dry-run 模式必须提供 --output-root")
     if args.episode_chunk_size <= 0:
@@ -882,7 +831,7 @@ def _run_backfill(args: argparse.Namespace) -> None:
         ("num_gpus", args.num_gpus),
         ("episode_chunk_size", args.episode_chunk_size),
         ("frame_loading", "full_episode"),
-        ("image_cache", not args.no_image_cache),
+        ("image_cache", True),
         ("view_mapping", view_mapping),
     ])
     _print_block("references", [
@@ -896,11 +845,11 @@ def _run_backfill(args: argparse.Namespace) -> None:
         _print_block("warnings", [("orphan_parquet_count", len(orphan_paths)), ("examples", preview)])
 
     tracker = BackfillWandbTracker(
-        enabled=args.wandb,
+        enabled=bool(args.wandb_project or args.wandb_run_name),
         project=args.wandb_project,
         run_name=args.wandb_run_name,
-        group=args.wandb_group,
-        tags=args.wandb_tags,
+        group=None,
+        tags=None,
         total_episodes=len(episode_metas),
         total_pairs=total_pairs,
         total_tasks=num_tasks,
@@ -912,7 +861,7 @@ def _run_backfill(args: argparse.Namespace) -> None:
         source_task_map_path=source_task_map_path,
         reference_tasks=len(reference_packs),
         orphan_parquet_count=len(orphan_paths),
-        image_cache_enabled=not args.no_image_cache,
+        image_cache_enabled=True,
     )
 
     pairs_completed = 0
@@ -926,8 +875,8 @@ def _run_backfill(args: argparse.Namespace) -> None:
                 reference_packs=reference_packs,
                 target_views=target_views,
                 ffmpeg_workers=args.ffmpeg_workers,
-                prefer_image_cache=not args.no_image_cache,
-                ffmpeg_bin=args.ffmpeg_bin,
+                prefer_image_cache=True,
+                ffmpeg_bin=FFMPEG_BIN,
             )
             tracker.log_dry_run(dry_run_stats=dry_run_stats)
             tracker.log_finish(
@@ -944,7 +893,7 @@ def _run_backfill(args: argparse.Namespace) -> None:
         )
         output_info = clone_info_with_new_float_features(
             info=info,
-            feature_names=[args.delta_feature_name],
+            feature_names=[DELTA_FEATURE_NAME],
         )
 
         existing_stats_rows = load_lerobot_episode_stats_rows(args.dataset_root)
@@ -984,8 +933,8 @@ def _run_backfill(args: argparse.Namespace) -> None:
                     reference_packs=reference_packs,
                     target_views=target_views,
                     ffmpeg_workers=args.ffmpeg_workers,
-                    prefer_image_cache=not args.no_image_cache,
-                    ffmpeg_bin=args.ffmpeg_bin,
+                    prefer_image_cache=True,
+                    ffmpeg_bin=FFMPEG_BIN,
                     batch_size=args.batch_size,
                     global_build_workers=args.global_build_workers,
                     desc="LeRobot dense delta inference",
@@ -1026,7 +975,7 @@ def _run_backfill(args: argparse.Namespace) -> None:
                         input_path=episode_meta["parquet_path"],
                         output_path=output_parquet_path,
                         dense_delta=dense_delta,
-                        delta_feature_name=args.delta_feature_name,
+                        delta_feature_name=DELTA_FEATURE_NAME,
                     )
 
                     base_stats_row = existing_stats_by_episode.get(episode_meta["episode_index"], {
@@ -1037,7 +986,7 @@ def _run_backfill(args: argparse.Namespace) -> None:
                         "episode_index": base_stats_row["episode_index"],
                         "stats": dict(base_stats_row.get("stats", {})),
                     }
-                    output_stats_row["stats"][args.delta_feature_name] = compute_scalar_stats(dense_delta)
+                    output_stats_row["stats"][DELTA_FEATURE_NAME] = compute_scalar_stats(dense_delta)
                     output_episode_stats_rows.append(output_stats_row)
 
                     delta_manifest_rows.append({
@@ -1079,7 +1028,7 @@ def _run_backfill(args: argparse.Namespace) -> None:
         validate_output_dataset(
             output_root=args.output_root,
             episode_metas=episode_metas,
-            delta_feature_name=args.delta_feature_name,
+            delta_feature_name=DELTA_FEATURE_NAME,
             verify_samples=args.verify_samples,
         )
 
@@ -1109,7 +1058,7 @@ def _run_backfill(args: argparse.Namespace) -> None:
 
 
 def main(args: argparse.Namespace) -> None:
-    if not args.profile:
+    if not args.profile_output:
         _run_backfill(args)
         return
 
@@ -1119,11 +1068,9 @@ def main(args: argparse.Namespace) -> None:
         _run_backfill(args)
     finally:
         profiler.disable()
-        _emit_profile_report(
+        _dump_profile_stats(
             profiler,
             profile_output=args.profile_output,
-            sort_key=args.profile_sort,
-            top_k=args.profile_top_k,
         )
 
 
