@@ -4,6 +4,7 @@
 """
 
 import atexit
+import time
 import traceback
 import torch
 import torch.multiprocessing as mp
@@ -212,6 +213,8 @@ class MultiGPUDeltaProgressInference:
         if self.num_gpus == 1:
             return self._infer_single_gpu(messages_list, batch_size, max_new_tokens, desc)
 
+        total_start = time.perf_counter()
+        split_start = total_start
         active_gpu_count = min(self.num_gpus, len(messages_list))
         active_gpu_ids = self.gpu_ids[:active_gpu_count]
 
@@ -228,14 +231,18 @@ class MultiGPUDeltaProgressInference:
             if len(sublist) > 0:
                 gpu_tasks.append((gpu_id, sublist))
             start_idx = end_idx
+        split_elapsed = time.perf_counter() - split_start
 
+        enqueue_start = time.perf_counter()
         request_id = self._request_counter
         self._request_counter += 1
 
         for gpu_id, sublist in gpu_tasks:
             self._task_queues[gpu_id].put((request_id, sublist, batch_size, max_new_tokens))
+        enqueue_elapsed = time.perf_counter() - enqueue_start
 
         results_by_gpu: Dict[int, List[Optional[int]]] = {}
+        wait_start = time.perf_counter()
         iterator = tqdm(
             total=len(gpu_tasks),
             desc=f"{desc} (across {len(gpu_tasks)} GPUs)",
@@ -251,11 +258,28 @@ class MultiGPUDeltaProgressInference:
             results_by_gpu[gpu_id] = results
             iterator.update(1)
         iterator.close()
+        wait_elapsed = time.perf_counter() - wait_start
 
         # 合并结果（保持原始顺序）
+        merge_start = time.perf_counter()
         all_results = []
         for gpu_id, _ in gpu_tasks:
             all_results.extend(results_by_gpu[gpu_id])
+        merge_elapsed = time.perf_counter() - merge_start
+
+        total_elapsed = time.perf_counter() - total_start
+        assignment_summary = ", ".join(
+            f"gpu{gpu_id}={len(sublist)}"
+            for gpu_id, sublist in gpu_tasks
+        )
+        tqdm.write(
+            "[multi_gpu_timing] "
+            f"desc={desc}, messages={len(messages_list)}, batch_size={batch_size}, "
+            f"assignments=[{assignment_summary}], "
+            f"split={split_elapsed:.3f}s, enqueue={enqueue_elapsed:.3f}s, "
+            f"wait={wait_elapsed:.3f}s, merge={merge_elapsed:.3f}s, "
+            f"total={total_elapsed:.3f}s"
+        )
 
         return all_results
     

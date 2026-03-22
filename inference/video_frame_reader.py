@@ -1,8 +1,7 @@
 import json
 import os
 import subprocess
-from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Dict, List, Sequence
+from typing import Any, Dict, Sequence
 
 from PIL import Image
 
@@ -13,13 +12,38 @@ def frame_file_name(frame_index: int) -> str:
     return f"frame_{frame_index:06d}.png"
 
 
+def resolve_frame_path(image_dir: str, frame_index: int) -> str:
+    return os.path.join(image_dir, frame_file_name(frame_index))
+
+
+def load_episode_frame_paths(
+    video_sources: Dict[str, LeRobotVideoSource],
+    frame_indices: Sequence[int],
+) -> Dict[str, Dict[int, str]]:
+    frame_paths: Dict[str, Dict[int, str]] = {}
+    unique_indices = sorted({int(frame_index) for frame_index in frame_indices})
+    for target_view, video_source in video_sources.items():
+        if not video_source.image_dir:
+            raise FileNotFoundError(
+                f"缺少预处理后的 images 目录: target_view={target_view}, video_path={video_source.video_path}"
+            )
+        target_view_paths: Dict[int, str] = {}
+        for frame_index in unique_indices:
+            frame_path = resolve_frame_path(video_source.image_dir, frame_index)
+            if not os.path.isfile(frame_path):
+                raise FileNotFoundError(frame_path)
+            target_view_paths[frame_index] = frame_path
+        frame_paths[target_view] = target_view_paths
+    return frame_paths
+
+
 def _load_frames_from_image_cache(
     image_dir: str,
     frame_indices: Sequence[int],
 ) -> Dict[int, Image.Image]:
     frame_cache: Dict[int, Image.Image] = {}
     for frame_index in frame_indices:
-        frame_path = os.path.join(image_dir, frame_file_name(frame_index))
+        frame_path = resolve_frame_path(image_dir, frame_index)
         if not os.path.exists(frame_path):
             raise FileNotFoundError(frame_path)
         with Image.open(frame_path) as image:
@@ -143,43 +167,3 @@ def decode_video_frames(
         height=height,
         ffmpeg_bin=ffmpeg_bin,
     )
-
-
-def load_episode_frame_cache(
-    video_sources: Dict[str, LeRobotVideoSource],
-    frame_indices: Sequence[int],
-    ffmpeg_workers: int = 4,
-    prefer_image_cache: bool = True,
-    ffmpeg_bin: str = "ffmpeg",
-) -> Dict[str, Dict[int, Image.Image]]:
-    """按 target view 批量加载指定帧，优先复用 images cache，否则走 ffmpeg 视频解码。"""
-    unique_indices = sorted({int(frame_index) for frame_index in frame_indices})
-    if not unique_indices:
-        return {target_view: {} for target_view in video_sources}
-
-    def _load_single_view(video_source: LeRobotVideoSource):
-        if prefer_image_cache and video_source.image_dir:
-            try:
-                return video_source.target_view, _load_frames_from_image_cache(
-                    video_source.image_dir,
-                    unique_indices,
-                )
-            except FileNotFoundError:
-                pass
-
-        return video_source.target_view, _decode_frames_with_ffmpeg(
-            video_path=video_source.video_path,
-            frame_indices=unique_indices,
-            width=video_source.width,
-            height=video_source.height,
-            ffmpeg_bin=ffmpeg_bin,
-        )
-
-    frame_cache: Dict[str, Dict[int, Image.Image]] = {}
-    max_workers = max(1, min(ffmpeg_workers, len(video_sources)))
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        iterator = executor.map(_load_single_view, video_sources.values())
-        for target_view, target_view_frames in iterator:
-            frame_cache[target_view] = target_view_frames
-
-    return frame_cache

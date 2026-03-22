@@ -32,10 +32,9 @@ from inference.lerobot_io import (
     write_json,
     write_jsonl,
 )
-from inference.video_frame_reader import load_episode_frame_cache
+from inference.video_frame_reader import load_episode_frame_paths
 
 DELTA_FEATURE_NAME = "prediction.progress_delta"
-FFMPEG_BIN = "ffmpeg"
 TASK_MAP_CANDIDATE_FILES = ("task_descriptions.json", "task_map.json")
 
 
@@ -85,11 +84,11 @@ class BackfillWandbTracker:
             "batch_size": args.batch_size,
             "num_gpus": args.num_gpus,
             "episode_chunk_size": args.episode_chunk_size,
-            "ffmpeg_workers": args.ffmpeg_workers,
             "global_build_workers": args.global_build_workers,
             "seed": args.seed,
             "dry_run": args.dry_run,
             "delta_feature_name": DELTA_FEATURE_NAME,
+            "image_transport": "path_only",
             "total_episodes": self.total_episodes,
             "total_pairs": self.total_pairs,
             "total_tasks": self.total_tasks,
@@ -153,7 +152,7 @@ class BackfillWandbTracker:
         source_task_map_path: Optional[str],
         reference_tasks: int,
         orphan_parquet_count: int,
-        image_cache_enabled: bool,
+        image_transport: str,
     ) -> None:
         self._log({
             "status/event": "start",
@@ -162,7 +161,7 @@ class BackfillWandbTracker:
             "meta/source_task_map_path": source_task_map_path or "<not-found>",
             "meta/reference_tasks": int(reference_tasks),
             "meta/orphan_parquet_count": int(orphan_parquet_count),
-            "meta/image_cache_enabled": bool(image_cache_enabled),
+            "meta/image_transport": image_transport,
             **self._progress_payload(pairs_completed=0, episodes_completed=0),
         })
 
@@ -418,40 +417,34 @@ def build_reference_packs(
     return reference_packs
 
 
-def decode_episode_chunk(
+def build_episode_frame_paths(
     episode_metas: Sequence[Dict[str, Any]],
-    ffmpeg_workers: int,
-    prefer_image_cache: bool,
-    ffmpeg_bin: str,
-) -> Dict[int, Dict[str, Dict[int, Any]]]:
-    frame_caches: Dict[int, Dict[str, Dict[int, Any]]] = {}
-    for episode_meta in tqdm(episode_metas, desc="解码 episode 帧"):
+) -> Dict[int, Dict[str, Dict[int, str]]]:
+    frame_paths_by_episode: Dict[int, Dict[str, Dict[int, str]]] = {}
+    for episode_meta in tqdm(episode_metas, desc="解析 episode 帧路径"):
         total_frames = int(episode_meta["T"])
         if total_frames <= 0:
             continue
-        frame_caches[episode_meta["episode_id"]] = load_episode_frame_cache(
+        frame_paths_by_episode[episode_meta["episode_id"]] = load_episode_frame_paths(
             video_sources=episode_meta["video_sources"],
             frame_indices=list(range(total_frames)),
-            ffmpeg_workers=ffmpeg_workers,
-            prefer_image_cache=prefer_image_cache,
-            ffmpeg_bin=ffmpeg_bin,
         )
-    return frame_caches
+    return frame_paths_by_episode
 
 
 def build_lerobot_job_message(
     job: Dict[str, Any],
-    frame_caches: Mapping[int, Dict[str, Dict[int, Any]]],
+    frame_paths_by_episode: Mapping[int, Dict[str, Dict[int, str]]],
     reference_packs: Mapping[str, Dict[str, Any]],
     target_views: Sequence[str],
 ) -> Tuple[int, int, List[Dict[str, Any]]]:
     episode_id = job["episode_id"]
     task_desc = job["task_desc"]
-    frame_cache = frame_caches[episode_id]
+    frame_paths = frame_paths_by_episode[episode_id]
     reference_pack = reference_packs[task_desc]
 
-    target_inputs_t1 = [frame_cache[target_view][job["i"]] for target_view in target_views]
-    target_inputs_t2 = [frame_cache[target_view][job["j"]] for target_view in target_views]
+    target_inputs_t1 = [frame_paths[target_view][job["i"]] for target_view in target_views]
+    target_inputs_t2 = [frame_paths[target_view][job["j"]] for target_view in target_views]
     messages = build_messages_from_inputs(
         target_inputs_t1=target_inputs_t1,
         target_inputs_t2=target_inputs_t2,
@@ -470,9 +463,6 @@ def infer_dense_delta_predictions(
     global_jobs: Sequence[Dict[str, Any]],
     reference_packs: Mapping[str, Dict[str, Any]],
     target_views: Sequence[str],
-    ffmpeg_workers: int,
-    prefer_image_cache: bool,
-    ffmpeg_bin: str,
     batch_size: int,
     global_build_workers: int,
     desc: str,
@@ -483,15 +473,10 @@ def infer_dense_delta_predictions(
     if len(global_jobs) == 0:
         return episode_predictions
 
-    frame_caches = decode_episode_chunk(
-        episode_metas=episode_metas,
-        ffmpeg_workers=ffmpeg_workers,
-        prefer_image_cache=prefer_image_cache,
-        ffmpeg_bin=ffmpeg_bin,
-    )
+    frame_paths_by_episode = build_episode_frame_paths(episode_metas=episode_metas)
     build_message_fn = partial(
         build_lerobot_job_message,
-        frame_caches=frame_caches,
+        frame_paths_by_episode=frame_paths_by_episode,
         reference_packs=reference_packs,
         target_views=target_views,
     )
@@ -653,22 +638,14 @@ def run_dry_run(
     episode_metas: Sequence[Dict[str, Any]],
     reference_packs: Mapping[str, Dict[str, Any]],
     target_views: Sequence[str],
-    ffmpeg_workers: int,
-    prefer_image_cache: bool,
-    ffmpeg_bin: str,
 ) -> Dict[str, Any]:
     if len(episode_metas) == 0:
-        payload = {"episodes": 0, "pairs": 0, "sample_message_items": 0}
+        payload = {"episodes": 0, "pairs": 0, "sample_message_items": 0, "sample_image_type": None}
         _print_block("dry_run", list(payload.items()))
         return payload
 
     first_chunk = list(episode_metas)
-    frame_caches = decode_episode_chunk(
-        episode_metas=first_chunk,
-        ffmpeg_workers=ffmpeg_workers,
-        prefer_image_cache=prefer_image_cache,
-        ffmpeg_bin=ffmpeg_bin,
-    )
+    frame_paths_by_episode = build_episode_frame_paths(episode_metas=first_chunk)
 
     sample_job = None
     for episode_meta in first_chunk:
@@ -684,25 +661,32 @@ def run_dry_run(
             break
 
     sample_message_items = 0
+    sample_image_type = None
     if sample_job is not None:
         _, _, messages = build_lerobot_job_message(
             sample_job,
-            frame_caches=frame_caches,
+            frame_paths_by_episode=frame_paths_by_episode,
             reference_packs=reference_packs,
             target_views=target_views,
         )
         sample_message_items = len(messages[0]["content"]) if messages else 0
+        for item in messages[0]["content"]:
+            if item.get("type") == "image":
+                sample_image_type = type(item.get("image")).__name__
+                break
 
     total_pairs = sum(meta["num_pairs"] for meta in first_chunk)
     payload = {
         "episodes": len(first_chunk),
         "pairs": total_pairs,
         "sample_message_items": sample_message_items,
+        "sample_image_type": sample_image_type,
     }
     _print_block("dry_run", [
         ("episodes", len(first_chunk)),
         ("pairs", total_pairs),
         ("sample_message_items", sample_message_items),
+        ("sample_image_type", sample_image_type),
     ])
     return payload
 
@@ -742,9 +726,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--num-gpus", type=int, default=1, help="使用的 GPU 数量")
     parser.add_argument("--global-build-workers", type=int, default=8, help="构建 Qwen messages 的线程数")
     parser.add_argument("--episode-chunk-size", type=int, default=1, help="每次处理多少个 episode，并在 chunk 内整体构造 messages")
-    parser.add_argument("--ffmpeg-workers", type=int, default=6, help="单个 episode 内并行解码多少路视频")
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--dry-run", action="store_true", help="只校验路径/解码/message 构造，不加载模型、不写文件")
+    parser.add_argument("--dry-run", action="store_true", help="只校验路径/message 构造，不加载模型、不写文件")
     parser.add_argument("--limit-episodes", type=int, default=None, help="可选：仅处理前若干个 episode")
     parser.add_argument("--verify-samples", type=int, default=3, help="写回完成后随机校验的 parquet 数量")
     parser.add_argument("--wandb-project", type=str, default=os.environ.get("WANDB_PROJECT"), help="W&B project 名称；传入或设置环境变量即启用")
@@ -830,8 +813,7 @@ def _run_backfill(args: argparse.Namespace) -> None:
         ("batch_size", args.batch_size),
         ("num_gpus", args.num_gpus),
         ("episode_chunk_size", args.episode_chunk_size),
-        ("frame_loading", "full_episode"),
-        ("image_cache", True),
+        ("image_transport", "path_only"),
         ("view_mapping", view_mapping),
     ])
     _print_block("references", [
@@ -861,7 +843,7 @@ def _run_backfill(args: argparse.Namespace) -> None:
         source_task_map_path=source_task_map_path,
         reference_tasks=len(reference_packs),
         orphan_parquet_count=len(orphan_paths),
-        image_cache_enabled=True,
+        image_transport="path_only",
     )
 
     pairs_completed = 0
@@ -874,9 +856,6 @@ def _run_backfill(args: argparse.Namespace) -> None:
                 episode_metas=dry_run_metas,
                 reference_packs=reference_packs,
                 target_views=target_views,
-                ffmpeg_workers=args.ffmpeg_workers,
-                prefer_image_cache=True,
-                ffmpeg_bin=FFMPEG_BIN,
             )
             tracker.log_dry_run(dry_run_stats=dry_run_stats)
             tracker.log_finish(
@@ -932,9 +911,6 @@ def _run_backfill(args: argparse.Namespace) -> None:
                     global_jobs=global_jobs,
                     reference_packs=reference_packs,
                     target_views=target_views,
-                    ffmpeg_workers=args.ffmpeg_workers,
-                    prefer_image_cache=True,
-                    ffmpeg_bin=FFMPEG_BIN,
                     batch_size=args.batch_size,
                     global_build_workers=args.global_build_workers,
                     desc="LeRobot dense delta inference",
