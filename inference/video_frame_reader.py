@@ -1,6 +1,7 @@
 import json
 import os
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, Sequence
 
 from PIL import Image
@@ -106,6 +107,47 @@ def _decode_frames_with_ffmpeg(
     return frame_cache
 
 
+def decode_video_frames_full(
+    video_path: str,
+    width: int,
+    height: int,
+    ffmpeg_bin: str = "ffmpeg",
+) -> Dict[int, Image.Image]:
+    command = [
+        ffmpeg_bin,
+        "-v",
+        "error",
+        "-i",
+        video_path,
+        "-f",
+        "rawvideo",
+        "-pix_fmt",
+        "rgb24",
+        "-",
+    ]
+    completed = subprocess.run(command, capture_output=True, check=False)
+    if completed.returncode != 0:
+        stderr = completed.stderr.decode("utf-8", errors="replace")
+        raise RuntimeError(f"ffmpeg 全量解码失败: {video_path}\n{stderr}")
+
+    frame_size = width * height * 3
+    if frame_size <= 0:
+        raise ValueError(f"非法视频分辨率: width={width}, height={height}")
+    if len(completed.stdout) % frame_size != 0:
+        raise RuntimeError(
+            f"ffmpeg 全量输出大小异常: video={video_path}, bytes={len(completed.stdout)}, frame_size={frame_size}"
+        )
+
+    decoded_count = len(completed.stdout) // frame_size
+    frame_cache: Dict[int, Image.Image] = {}
+    for frame_index in range(decoded_count):
+        start = frame_index * frame_size
+        end = start + frame_size
+        frame_bytes = completed.stdout[start:end]
+        frame_cache[frame_index] = Image.frombytes("RGB", (width, height), frame_bytes).copy()
+    return frame_cache
+
+
 def probe_video_info(video_path: str, ffprobe_bin: str = "ffprobe") -> Dict[str, Any]:
     """读取视频的帧数和分辨率，供 reference/demo 抽帧复用。"""
     command = [
@@ -160,3 +202,38 @@ def decode_video_frames(
         height=height,
         ffmpeg_bin=ffmpeg_bin,
     )
+
+
+def load_episode_video_frame_cache(
+    video_sources: Dict[str, LeRobotVideoSource],
+    total_frames: int,
+    ffmpeg_workers: int = 1,
+    ffmpeg_bin: str = "ffmpeg",
+) -> Dict[str, Dict[int, Image.Image]]:
+    def _load_single_view(video_source: LeRobotVideoSource):
+        if not video_source.video_path:
+            raise ValueError(f"video_local 模式缺少 video_path: target_view={video_source.target_view}")
+        if video_source.width is None or video_source.height is None:
+            raise ValueError(f"video_local 模式缺少视频尺寸: target_view={video_source.target_view}")
+        frame_cache = decode_video_frames_full(
+            video_path=video_source.video_path,
+            width=int(video_source.width),
+            height=int(video_source.height),
+            ffmpeg_bin=ffmpeg_bin,
+        )
+        if len(frame_cache) < total_frames:
+            raise RuntimeError(
+                f"视频总帧数不足: target_view={video_source.target_view}, "
+                f"decoded={len(frame_cache)}, expected={total_frames}, video_path={video_source.video_path}"
+            )
+        if len(frame_cache) > total_frames:
+            frame_cache = {frame_idx: frame_cache[frame_idx] for frame_idx in range(total_frames)}
+        return video_source.target_view, frame_cache
+
+    frame_caches: Dict[str, Dict[int, Image.Image]] = {}
+    max_workers = max(1, min(ffmpeg_workers, len(video_sources)))
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        iterator = executor.map(_load_single_view, video_sources.values())
+        for target_view, target_view_frames in iterator:
+            frame_caches[target_view] = target_view_frames
+    return frame_caches

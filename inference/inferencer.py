@@ -13,14 +13,17 @@ from utils.data_formatting import parse_delta_progress_int
 class DeltaProgressInference:
     """Delta Progress推理核心类"""
     
-    def __init__(self, base_model_path: str, adapter_path: str):
+    def __init__(self, base_model_path: str, adapter_path: str, device: Optional[str] = None):
         """初始化模型和处理器"""
         print("[single_gpu] loading model")
+        if device is not None and device.startswith("cuda:"):
+            torch.cuda.set_device(int(device.split(":", 1)[1]))
+        device_map = {"": device} if device is not None else "auto"
         base_model = AutoModelForImageTextToText.from_pretrained(
             base_model_path,
             dtype="auto",
             attn_implementation="flash_attention_2",
-            device_map="auto",  # 自动将模型分配到可用的设备GPU上
+            device_map=device_map,
             trust_remote_code=True
         )
         
@@ -73,8 +76,22 @@ class DeltaProgressInference:
     def infer_from_messages_batch(
         self, 
         messages_list: List[List[Dict[str, Any]]], 
-        max_new_tokens: int = 128
+        max_new_tokens: int = 128,
+        batch_size: Optional[int] = None,
     ) -> List[Optional[int]]:
+        if len(messages_list) == 0:
+            return []
+        if batch_size is not None and batch_size > 0 and len(messages_list) > batch_size:
+            results: List[Optional[int]] = []
+            for start_idx in range(0, len(messages_list), batch_size):
+                results.extend(
+                    self.infer_from_messages_batch(
+                        messages_list[start_idx:start_idx + batch_size],
+                        max_new_tokens=max_new_tokens,
+                        batch_size=None,
+                    )
+                )
+            return results
 
         # 批量 apply chat template
         inputs = self.processor.apply_chat_template(

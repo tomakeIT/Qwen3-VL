@@ -22,6 +22,9 @@ class LeRobotVideoSource:
     target_view: str
     video_key: str
     image_dir: Optional[str]
+    video_path: Optional[str] = None
+    height: Optional[int] = None
+    width: Optional[int] = None
 
 
 @dataclass
@@ -178,6 +181,7 @@ def load_lerobot_episodes(
     dataset_root: str,
     target_views: Sequence[str],
     explicit_view_map: Optional[Mapping[str, str]] = None,
+    include_video_metadata: bool = False,
 ) -> Tuple[Dict[str, Any], Dict[int, str], List[LeRobotEpisodeRecord], Dict[str, str]]:
     info = load_lerobot_info(dataset_root)
     tasks_map = load_lerobot_tasks(dataset_root)
@@ -207,10 +211,24 @@ def load_lerobot_episodes(
                 episode_index=episode_index,
                 video_key=video_key,
             )
+            video_path = None
+            height = None
+            width = None
+            if include_video_metadata:
+                feature = info["features"][video_key]
+                shape = feature.get("shape", [])
+                if len(shape) < 2:
+                    raise ValueError(f"视频特征 `{video_key}` 缺少有效 shape: {shape}")
+                video_path = resolve_episode_video_path(dataset_root, info, episode_index, video_key)
+                height = int(shape[0])
+                width = int(shape[1])
             video_sources[target_view] = LeRobotVideoSource(
                 target_view=target_view,
                 video_key=video_key,
                 image_dir=image_dir,
+                video_path=video_path,
+                height=height,
+                width=width,
             )
 
         episodes.append(
