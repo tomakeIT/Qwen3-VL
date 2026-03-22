@@ -1,7 +1,7 @@
 
 ADAPTER="/home/jialeng/LightwheelData/checkpoint-success-6tasks"
 DATASET_ROOT="/home/jialeng/LightwheelDataFast/Robocasa_lerobot_6tasks"
-OUTPUT_ROOT="/home/jialeng/LightwheelDataFast/Robocasa_lerobot_6tasks_with_progress2"
+OUTPUT_ROOT="/home/jialeng/LightwheelDataFast/Robocasa_lerobot_6tasks_with_progress_profiling"
 REFERENCE_MAP="/home/jialeng/Qwen3-VL/inference/data/6tasks_referece_map.json"
 RUN_NAME="lerobot_backfill_6tasks"
 
@@ -14,6 +14,8 @@ python3 -m inference.backfill \
     --reference-map $REFERENCE_MAP \
     --config dataset/configs/build_config_15tasks.yaml \
     --num-gpus 6 \
-    --batch-size 8 \
+    --batch-size 32 \
     --episode-chunk-size 4 \
-    --wandb-run-name $RUN_NAME
+    --wandb-run-name $RUN_NAME \
+    --limit-episodes 4 \
+    --profile-output "./backfill_profile.prof"
