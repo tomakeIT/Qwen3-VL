@@ -331,10 +331,14 @@ def run_dry_run_sharded(
                 ffmpeg_bin=ffmpeg_bin,
             )
         }
+        cached_reference_packs = _preload_reference_packs_as_objects(
+            reference_packs=reference_packs,
+            task_descs=[first_episode["task_desc"]],
+        )
         _, _, messages = _build_object_job_message(
             sample_job,
             frame_caches_by_episode=frame_caches_by_episode,
-            reference_packs=reference_packs,
+            reference_packs=cached_reference_packs,
             target_views=target_views,
         )
 
@@ -448,7 +452,7 @@ def _worker_loop(
         else:
             shard_chunks = [[episode_meta] for episode_meta in episode_shard]
 
-        if input_mode == "images_cached":
+        if input_mode in ("images_cached", "video_local"):
             reference_start = time.perf_counter()
             cached_reference_packs = _preload_reference_packs_as_objects(
                 reference_packs=reference_packs,
@@ -469,7 +473,7 @@ def _worker_loop(
                     inference=inference,
                     episode_metas=episode_chunk,
                     global_jobs=global_jobs,
-                    reference_packs=reference_packs,
+                    reference_packs=cached_reference_packs,
                     target_views=target_views,
                     batch_size=int(args_dict["batch_size"]),
                     global_build_workers=int(args_dict["global_build_workers"]),
