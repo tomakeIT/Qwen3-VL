@@ -28,7 +28,6 @@ from inference.backfill_common import (
     chunked,
     infer_dense_delta_predictions,
     load_reference_map,
-    load_task_description_map,
     plan_episode_shards,
     resolve_reference_map_by_task_desc,
     validate_output_dataset,
@@ -52,6 +51,9 @@ from inference.video_frame_reader import (
     load_image_inputs_as_objects,
 )
 
+VIDEO_LOCAL_FFMPEG_BIN = "ffmpeg"
+VIDEO_LOCAL_FFMPEG_WORKERS = 2
+
 
 def _dump_profile_stats(profiler: cProfile.Profile, *, profile_output: str) -> None:
     output_dir = os.path.dirname(profile_output)
@@ -72,12 +74,6 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
         help="reference demo 路径映射；只支持 {task_name: reference_demo_path}",
     )
-    parser.add_argument(
-        "--source-task-map",
-        type=str,
-        default=None,
-        help="可选：源数据集的 task_name -> task_description 映射文件；不传则尝试自动发现",
-    )
     parser.add_argument("--config", type=str, default="dataset/configs/build_config_15tasks.yaml")
     parser.add_argument("--pair-interval", type=int, default=50, help="dense pair 时间间隔")
     parser.add_argument("--batch-size", type=int, default=8, help="每张 GPU 的子 batch 大小")
@@ -90,8 +86,6 @@ def build_parser() -> argparse.ArgumentParser:
         default="images",
         help="worker 本地读取模式",
     )
-    parser.add_argument("--ffmpeg-bin", type=str, default="ffmpeg", help="video_local 模式使用的 ffmpeg 可执行文件")
-    parser.add_argument("--ffmpeg-workers", type=int, default=2, help="video_local 模式单个 worker 内并行解码视角数")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--dry-run", action="store_true", help="只校验 shard 规划与 message 构造，不加载模型、不写文件")
     parser.add_argument("--limit-episodes", type=int, default=None, help="可选：仅处理前若干个 episode")
@@ -439,6 +433,11 @@ def _worker_loop(
             "decode_sec": 0.0,
             "build_sec": 0.0,
             "infer_sec": 0.0,
+            "prepare_wait_sec": 0.0,
+            "prepare_cpu_sec": 0.0,
+            "transfer_sec": 0.0,
+            "generate_sec": 0.0,
+            "decode_output_sec": 0.0,
             "write_sec": 0.0,
         }
         pairs_completed = 0
@@ -465,6 +464,14 @@ def _worker_loop(
         for episode_chunk in shard_chunks:
             event_chunk_index += 1
             predict_start = time.perf_counter()
+            batch_infer_stats = {
+                "prepare_wait_sec": 0.0,
+                "prepare_cpu_sec": 0.0,
+                "transfer_sec": 0.0,
+                "generate_sec": 0.0,
+                "decode_sec": 0.0,
+                "total_sec": 0.0,
+            }
             if input_mode == "images":
                 global_jobs: List[Dict[str, Any]] = []
                 for episode_meta in episode_chunk:
@@ -480,6 +487,8 @@ def _worker_loop(
                     desc=f"worker{rank}-images",
                 )
                 chunk_pairs = len(global_jobs)
+                if chunk_pairs > 0:
+                    batch_infer_stats = inference.get_last_batch_stats()
                 predict_elapsed = time.perf_counter() - predict_start
                 timings["predict_sec"] += predict_elapsed
             elif input_mode == "images_cached":
@@ -492,6 +501,8 @@ def _worker_loop(
                     global_build_workers=int(args_dict["global_build_workers"]),
                 )
                 chunk_pairs = sum(meta["num_pairs"] for meta in episode_chunk)
+                if chunk_pairs > 0:
+                    batch_infer_stats = inference.get_last_batch_stats()
                 timings["load_sec"] += mode_timings["load_sec"]
                 timings["build_sec"] += mode_timings["build_sec"]
                 timings["infer_sec"] += mode_timings["infer_sec"]
@@ -500,7 +511,7 @@ def _worker_loop(
                 episode_predictions, mode_timings = infer_dense_delta_predictions_video_local(
                     inference=inference,
                     episode_metas=episode_chunk,
-                    reference_packs=reference_packs,
+                    reference_packs=cached_reference_packs,
                     target_views=target_views,
                     batch_size=int(args_dict["batch_size"]),
                     global_build_workers=int(args_dict["global_build_workers"]),
@@ -508,10 +519,18 @@ def _worker_loop(
                     ffmpeg_workers=int(args_dict["ffmpeg_workers"]),
                 )
                 chunk_pairs = sum(meta["num_pairs"] for meta in episode_chunk)
+                if chunk_pairs > 0:
+                    batch_infer_stats = inference.get_last_batch_stats()
                 timings["decode_sec"] += mode_timings["decode_sec"]
                 timings["build_sec"] += mode_timings["build_sec"]
                 timings["infer_sec"] += mode_timings["infer_sec"]
                 timings["predict_sec"] += time.perf_counter() - predict_start
+
+            timings["prepare_wait_sec"] += float(batch_infer_stats["prepare_wait_sec"])
+            timings["prepare_cpu_sec"] += float(batch_infer_stats["prepare_cpu_sec"])
+            timings["transfer_sec"] += float(batch_infer_stats["transfer_sec"])
+            timings["generate_sec"] += float(batch_infer_stats["generate_sec"])
+            timings["decode_output_sec"] += float(batch_infer_stats["decode_sec"])
 
             dense_delta_results = build_dense_delta_results(
                 episode_metas=episode_chunk,
@@ -616,11 +635,7 @@ def _run_backfill_sharded(args: argparse.Namespace) -> None:
         )
 
     raw_reference_map = load_reference_map(args.reference_map)
-    if args.source_task_map:
-        source_task_map_path = args.source_task_map
-        source_task_map = load_task_description_map(args.source_task_map)
-    else:
-        source_task_map_path, source_task_map = auto_discover_task_description_map(list(raw_reference_map.values()))
+    source_task_map_path, source_task_map = auto_discover_task_description_map(list(raw_reference_map.values()))
 
     reference_map = resolve_reference_map_by_task_desc(
         raw_reference_map=raw_reference_map,
@@ -702,8 +717,8 @@ def _run_backfill_sharded(args: argparse.Namespace) -> None:
             reference_packs=reference_packs,
             target_views=target_views,
             input_mode=args.input_mode,
-            ffmpeg_bin=args.ffmpeg_bin,
-            ffmpeg_workers=args.ffmpeg_workers,
+            ffmpeg_bin=VIDEO_LOCAL_FFMPEG_BIN,
+            ffmpeg_workers=VIDEO_LOCAL_FFMPEG_WORKERS,
         )
         tracker.log_dry_run(dry_run_stats=dry_run_stats)
         tracker.log_finish(
@@ -736,8 +751,8 @@ def _run_backfill_sharded(args: argparse.Namespace) -> None:
         "global_build_workers": args.global_build_workers,
         "episode_chunk_size": args.episode_chunk_size,
         "input_mode": args.input_mode,
-        "ffmpeg_bin": args.ffmpeg_bin,
-        "ffmpeg_workers": args.ffmpeg_workers,
+        "ffmpeg_bin": VIDEO_LOCAL_FFMPEG_BIN,
+        "ffmpeg_workers": VIDEO_LOCAL_FFMPEG_WORKERS,
     }
     for rank, episode_shard in enumerate(active_shards):
         worker = ctx.Process(

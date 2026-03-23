@@ -2,12 +2,50 @@
 Delta Progress推理核心类
 """
 
+from concurrent.futures import ThreadPoolExecutor
+from functools import lru_cache
+import importlib.util
+from pathlib import Path
+import time
 import torch
-from typing import List, Dict, Any, Optional
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from transformers import AutoModelForImageTextToText, AutoProcessor
 from peft import PeftModel
 from utils.data_formatting import parse_delta_progress_int
+
+
+@lru_cache(maxsize=1)
+def _resolve_process_vision_info():
+    try:
+        from qwen_vl_utils import process_vision_info
+
+        return process_vision_info
+    except ImportError:
+        vision_process_path = (
+            Path(__file__).resolve().parent.parent
+            / "qwen-vl-utils"
+            / "src"
+            / "qwen_vl_utils"
+            / "vision_process.py"
+        )
+        if not vision_process_path.is_file():
+            raise RuntimeError(
+                "未找到 qwen_vl_utils.process_vision_info；"
+                "请安装 qwen-vl-utils，或确保仓库内 qwen-vl-utils/src/qwen_vl_utils/vision_process.py 存在。"
+            )
+        spec = importlib.util.spec_from_file_location(
+            "local_qwen_vl_utils_vision_process",
+            str(vision_process_path),
+        )
+        if spec is None or spec.loader is None:
+            raise RuntimeError(f"无法加载本地 vision_process.py: {vision_process_path}")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        process_vision_info = getattr(module, "process_vision_info", None)
+        if process_vision_info is None:
+            raise RuntimeError(f"本地 vision_process.py 缺少 process_vision_info: {vision_process_path}")
+        return process_vision_info
 
 
 class DeltaProgressInference:
@@ -37,20 +75,58 @@ class DeltaProgressInference:
             # 确保pad_token_id已设置（如果未设置，使用eos_token_id）
             if self.processor.tokenizer.pad_token_id is None:
                 self.processor.tokenizer.pad_token_id = self.processor.tokenizer.eos_token_id
+        image_processor = getattr(self.processor, "image_processor", None)
+        self._image_patch_size = int(getattr(image_processor, "patch_size", 14))
+        self._last_batch_stats = self._empty_batch_stats()
         print("[single_gpu] ready")
-    
-    
-    def infer_from_messages(self, messages: List[Dict[str, Any]], max_new_tokens: int = 128) -> Optional[int]:
-        """从messages格式进行推理，返回delta_progress整数"""
-        inputs = self.processor.apply_chat_template(
-            messages,
-            tokenize=True,
+
+    @staticmethod
+    def _empty_batch_stats() -> Dict[str, float]:
+        return {
+            "prepare_wait_sec": 0.0,
+            "prepare_cpu_sec": 0.0,
+            "transfer_sec": 0.0,
+            "generate_sec": 0.0,
+            "decode_sec": 0.0,
+            "total_sec": 0.0,
+        }
+
+    def get_last_batch_stats(self) -> Dict[str, float]:
+        return dict(self._last_batch_stats)
+
+    def _prepare_batch_inputs(
+        self,
+        messages_batch: Sequence[List[Dict[str, Any]]],
+        padding: bool,
+    ) -> Tuple[Any, float]:
+        process_vision_info = _resolve_process_vision_info()
+        prepare_start = time.perf_counter()
+        text = self.processor.apply_chat_template(
+            list(messages_batch),
+            tokenize=False,
             add_generation_prompt=True,
-            return_dict=True,
-            return_tensors="pt"
         )
-        inputs = inputs.to(self.model.device)
-        
+        image_inputs, video_inputs, video_kwargs = process_vision_info(
+            list(messages_batch),
+            return_video_kwargs=True,
+            image_patch_size=self._image_patch_size,
+        )
+        inputs = self.processor(
+            text=text,
+            images=image_inputs,
+            videos=video_inputs,
+            padding=padding,
+            return_tensors="pt",
+            **video_kwargs,
+        )
+        return inputs, time.perf_counter() - prepare_start
+
+    def _generate_and_decode(
+        self,
+        inputs,
+        max_new_tokens: int,
+    ) -> Tuple[List[Optional[int]], float, float]:
+        generate_start = time.perf_counter()
         with torch.no_grad():
             generated_ids = self.model.generate(
                 **inputs,
@@ -58,72 +134,85 @@ class DeltaProgressInference:
                 do_sample=False,
                 temperature=None,
             )
-        
+        generate_sec = time.perf_counter() - generate_start
+
+        decode_start = time.perf_counter()
         generated_ids_trimmed = [
-            out_ids[len(in_ids):] 
+            out_ids[len(in_ids):]
             for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
         ]
-        
-        output_text = self.processor.batch_decode(
+        output_texts = self.processor.batch_decode(
             generated_ids_trimmed,
             skip_special_tokens=True,
-            clean_up_tokenization_spaces=False
-        )[0]
-        
-        return parse_delta_progress_int(output_text)
-    
-    
+            clean_up_tokenization_spaces=False,
+        )
+        decode_sec = time.perf_counter() - decode_start
+        return [parse_delta_progress_int(text) for text in output_texts], generate_sec, decode_sec
+
+    def infer_from_messages(self, messages: List[Dict[str, Any]], max_new_tokens: int = 128) -> Optional[int]:
+        """从messages格式进行推理，返回delta_progress整数"""
+        results = self.infer_from_messages_batch(
+            [messages],
+            max_new_tokens=max_new_tokens,
+            batch_size=1,
+        )
+        return results[0] if results else None
+
     def infer_from_messages_batch(
         self, 
         messages_list: List[List[Dict[str, Any]]], 
         max_new_tokens: int = 128,
         batch_size: Optional[int] = None,
     ) -> List[Optional[int]]:
+        self._last_batch_stats = self._empty_batch_stats()
         if len(messages_list) == 0:
             return []
-        if batch_size is not None and batch_size > 0 and len(messages_list) > batch_size:
-            results: List[Optional[int]] = []
-            for start_idx in range(0, len(messages_list), batch_size):
-                results.extend(
-                    self.infer_from_messages_batch(
-                        messages_list[start_idx:start_idx + batch_size],
-                        max_new_tokens=max_new_tokens,
-                        batch_size=None,
-                    )
-                )
-            return results
+        effective_batch_size = len(messages_list)
+        if batch_size is not None and batch_size > 0:
+            effective_batch_size = int(batch_size)
 
-        # 批量 apply chat template
-        inputs = self.processor.apply_chat_template(
-            messages_list,
-            tokenize=True,
-            add_generation_prompt=True,
-            return_dict=True,
-            return_tensors="pt",
-            padding=True # 批量处理时不同样本的序列长度不一致，需要在 apply_chat_template 中启用 padding。
-        )
-        inputs = inputs.to(self.model.device)
-        
-        # 批量generate
-        with torch.no_grad():
-            generated_ids = self.model.generate(
-                **inputs,
-                max_new_tokens=max_new_tokens,
-                do_sample=False,
-                temperature=None,
-            )
-        
-        # 批量trim和decode
-        generated_ids_trimmed = [
-            out_ids[len(in_ids):] 
-            for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
+        message_batches = [
+            messages_list[start_idx:start_idx + effective_batch_size]
+            for start_idx in range(0, len(messages_list), effective_batch_size)
         ]
-        
-        output_texts = self.processor.batch_decode(
-            generated_ids_trimmed,
-            skip_special_tokens=True,
-            clean_up_tokenization_spaces=False
-        )
-        
-        return [parse_delta_progress_int(text) for text in output_texts]
+        results: List[Optional[int]] = []
+        total_start = time.perf_counter()
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            first_batch = message_batches[0]
+            pending_future = executor.submit(
+                self._prepare_batch_inputs,
+                first_batch,
+                len(first_batch) > 1,
+            )
+
+            for batch_idx, message_batch in enumerate(message_batches):
+                wait_start = time.perf_counter()
+                cpu_inputs, prepare_cpu_sec = pending_future.result()
+                self._last_batch_stats["prepare_wait_sec"] += time.perf_counter() - wait_start
+                self._last_batch_stats["prepare_cpu_sec"] += prepare_cpu_sec
+
+                next_batch_idx = batch_idx + 1
+                if next_batch_idx < len(message_batches):
+                    next_batch = message_batches[next_batch_idx]
+                    pending_future = executor.submit(
+                        self._prepare_batch_inputs,
+                        next_batch,
+                        len(next_batch) > 1,
+                    )
+
+                transfer_start = time.perf_counter()
+                inputs = cpu_inputs.to(self.model.device)
+                self._last_batch_stats["transfer_sec"] += time.perf_counter() - transfer_start
+
+                batch_results, generate_sec, decode_sec = self._generate_and_decode(
+                    inputs,
+                    max_new_tokens=max_new_tokens,
+                )
+                self._last_batch_stats["generate_sec"] += generate_sec
+                self._last_batch_stats["decode_sec"] += decode_sec
+                results.extend(batch_results)
+
+        self._last_batch_stats["total_sec"] = time.perf_counter() - total_start
+        return results
 

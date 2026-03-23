@@ -72,23 +72,6 @@ class BackfillWandbTracker:
         except ImportError as exc:
             raise RuntimeError("启用 --wandb 失败：当前环境未安装 wandb") from exc
 
-        config = {
-            "dataset_root": getattr(args, "dataset_root", None),
-            "output_root": getattr(args, "output_root", None),
-            "pair_interval": getattr(args, "pair_interval", None),
-            "batch_size": getattr(args, "batch_size", None),
-            "num_gpus": getattr(args, "num_gpus", None),
-            "episode_chunk_size": getattr(args, "episode_chunk_size", None),
-            "global_build_workers": getattr(args, "global_build_workers", None),
-            "seed": getattr(args, "seed", None),
-            "dry_run": getattr(args, "dry_run", None),
-            "delta_feature_name": DELTA_FEATURE_NAME,
-            "image_transport": image_transport,
-            "dispatch_mode": dispatch_mode,
-            "total_episodes": self.total_episodes,
-            "total_pairs": self.total_pairs,
-            "total_tasks": self.total_tasks,
-        }
         self._wandb = wandb
         self._run = wandb.init(
             project=project,
@@ -96,7 +79,6 @@ class BackfillWandbTracker:
             group=group,
             tags=list(tags or []),
             job_type="backfill",
-            config=config,
         )
 
         run_url = None
@@ -116,10 +98,7 @@ class BackfillWandbTracker:
         pairs_per_sec = float(pairs_completed) / elapsed_sec if elapsed_sec > 1e-8 else 0.0
         payload: Dict[str, Any] = {
             "progress/pairs_completed": int(pairs_completed),
-            "progress/pairs_total": self.total_pairs,
             "progress/episodes_completed": int(episodes_completed),
-            "progress/episodes_total": self.total_episodes,
-            "progress/tasks_total": self.total_tasks,
             "runtime/elapsed_sec": elapsed_sec,
             "runtime/pairs_per_sec": pairs_per_sec,
         }
@@ -151,20 +130,12 @@ class BackfillWandbTracker:
     ) -> None:
         self._log({
             "status/event": "start",
-            "meta/target_views": ",".join(target_views),
-            "meta/view_mapping": dict(view_mapping),
-            "meta/source_task_map_path": source_task_map_path or "<not-found>",
-            "meta/reference_tasks": int(reference_tasks),
-            "meta/orphan_parquet_count": int(orphan_parquet_count),
-            "meta/image_transport": image_transport,
-            "meta/dispatch_mode": dispatch_mode,
             **self._progress_payload(pairs_completed=0, episodes_completed=0),
         })
 
     def log_dry_run(self, *, dry_run_stats: Mapping[str, Any]) -> None:
         self._log({
             "status/event": "dry_run",
-            **{f"dry_run/{key}": value for key, value in dry_run_stats.items()},
             **self._progress_payload(pairs_completed=0, episodes_completed=0),
         })
 
@@ -182,12 +153,8 @@ class BackfillWandbTracker:
     ) -> None:
         self._log({
             "status/event": "episode_chunk",
-            "chunk/episode_chunk_index": int(episode_chunk_index),
-            "chunk/episode_chunks_total": int(total_episode_chunks),
             "chunk/episodes_in_chunk": int(episodes_in_chunk),
             "chunk/pairs_in_chunk": int(pairs_in_chunk),
-            "chunk/missing_pairs_in_chunk": int(missing_pairs_in_chunk),
-            "output/manifest_rows": int(manifest_rows),
             **self._progress_payload(
                 pairs_completed=pairs_completed,
                 episodes_completed=episodes_completed,
@@ -204,7 +171,6 @@ class BackfillWandbTracker:
     ) -> None:
         self._log({
             "status/event": status,
-            "output/manifest_rows": int(manifest_rows),
             **self._progress_payload(
                 pairs_completed=pairs_completed,
                 episodes_completed=episodes_completed,
@@ -221,8 +187,6 @@ class BackfillWandbTracker:
     ) -> None:
         self._log({
             "status/event": "failed",
-            "error/type": error_type,
-            "error/message": error_message[:1000],
             **self._progress_payload(
                 pairs_completed=pairs_completed,
                 episodes_completed=episodes_completed,
