@@ -291,7 +291,7 @@ class MultiGPUDeltaProgressInference:
         desc: str
     ) -> List[Optional[int]]:
         """单 GPU 推理（退化为原来的 DeltaProgressInference）"""
-        from inference.inferencer import DeltaProgressInference
+        from inference.core.inferencer import DeltaProgressInference
 
         if self._single_gpu_inference is None:
             self._single_gpu_inference = DeltaProgressInference(self.base_model_path, self.adapter_path)

@@ -9,7 +9,7 @@ from typing import Dict, Iterable, List, Optional
 
 from tqdm import tqdm
 
-from inference.lerobot_io import (
+from inference.core.lerobot_io import (
     load_lerobot_episode_rows,
     load_lerobot_info,
     resolve_episode_image_dir,

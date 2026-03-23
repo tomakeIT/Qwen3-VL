@@ -9,10 +9,10 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 import numpy as np
 from tqdm import tqdm
 
-from inference.demo_utils import build_messages_for_job_chunk, build_messages_from_demo, scan_demo_frames
-from inference.io_utils import load_config_namespace, load_json
-from inference.metrics import calc_monotonicity_rate, calc_total_variation, compute_ground_truth_curve
-from inference.viz_utils import safe_mean
+from inference.core.demo_utils import build_messages_for_job_chunk, build_messages_from_demo, scan_demo_frames
+from inference.core.io_utils import load_config_namespace, load_json
+from inference.core.metrics import calc_monotonicity_rate, calc_total_variation, compute_ground_truth_curve
+from inference.viz.viz_utils import safe_mean
 
 
 def calc_correlation(pred: np.ndarray, gt: np.ndarray) -> Tuple[float, float]:
@@ -385,7 +385,7 @@ def run_eval_curves(
 
     config = load_config_namespace(config_path)
 
-    from inference.multi_gpu_inferencer import MultiGPUDeltaProgressInference
+    from inference.core.multi_gpu_inferencer import MultiGPUDeltaProgressInference
 
     inference = MultiGPUDeltaProgressInference(
         base_model_path=base_model,

@@ -18,7 +18,7 @@ echo "检测到 $NUM_GPUS 张 GPU"
 
 echo ""
 echo "========== 1. Pairwise 批量评估（多 GPU）=========="
-# python3 -m inference.eval_pairwise \
+# python3 -m inference.cli.eval_pairwise \
 #     --base-model "$BASE_MODEL" \
 #     --adapter "$ADAPTER" \
 #     --data-samples /home/lightwheel/erdao.liang/LightwheelData/slowdata/data_1W_Robocasa_X7s/eval/ArrangeVegetables_eval.json \
@@ -29,7 +29,7 @@ echo "========== 1. Pairwise 批量评估（多 GPU）=========="
 
 echo ""
 echo "========== 2. Progress Curve 单 Demo（多 GPU）=========="
-# python3 -m inference.curve_demo \
+# python3 -m inference.cli.curve_demo \
 #     --base-model "$BASE_MODEL" \
 #     --adapter "$ADAPTER" \
 #     --target-demo /home/lightwheel/erdao.liang/LightwheelData/slowdata/1W_Robocasa_X7s_More/ArrangeVegetables/ArrangeVegetables_1761706678200653 \
@@ -42,7 +42,7 @@ echo "========== 2. Progress Curve 单 Demo（多 GPU）=========="
 
 echo ""
 echo "========== 3. Progress Curve 批量评估（多 GPU）=========="
-python3 -m inference.eval_curves \
+python3 -m inference.cli.eval_curves \
     --base-model "$BASE_MODEL" \
     --adapter "$ADAPTER" \
     --demo-list inference/data/demo_list_arrange_vegetables_eval.json \

@@ -15,8 +15,8 @@ from matplotlib.animation import FuncAnimation
 from PIL import Image
 from tqdm import tqdm
 
-from inference.demo_utils import build_messages_from_demo, scan_demo_frames
-from inference.io_utils import load_config_namespace
+from inference.core.demo_utils import build_messages_from_demo, scan_demo_frames
+from inference.core.io_utils import load_config_namespace
 
 
 def load_frames_for_indices(target_demo_path: str, target_views: List[str], frame_indices: np.ndarray) -> List[np.ndarray]:
@@ -205,7 +205,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(args: argparse.Namespace) -> None:
-    from inference.multi_gpu_inferencer import MultiGPUDeltaProgressInference
+    from inference.core.multi_gpu_inferencer import MultiGPUDeltaProgressInference
 
     os.makedirs(args.output_dir, exist_ok=True)
     config = load_config_namespace(args.config)

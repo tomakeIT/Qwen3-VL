@@ -4,13 +4,12 @@ import argparse
 import cProfile
 import multiprocessing as mp
 import os
-import time
 import traceback
 from typing import Any, Dict, List, Mapping, Sequence, Tuple
 
 import numpy as np
 
-from inference.backfill_common import (
+from inference.backfill.common import (
     DELTA_FEATURE_NAME,
     BackfillWandbTracker,
     _print_block,
@@ -33,9 +32,9 @@ from inference.backfill_common import (
     validate_output_dataset,
     write_augmented_parquet,
 )
-from inference.demo_utils import build_messages_for_job_chunk, build_messages_from_inputs
-from inference.io_utils import load_config_namespace, load_jsonl_rows
-from inference.lerobot_io import (
+from inference.core.demo_utils import build_messages_for_job_chunk, build_messages_from_inputs
+from inference.core.io_utils import load_config_namespace, load_jsonl_rows
+from inference.core.lerobot_io import (
     clone_info_with_new_float_features,
     find_orphan_episode_files,
     load_lerobot_episode_stats_rows,
@@ -45,7 +44,7 @@ from inference.lerobot_io import (
     write_json,
     write_jsonl,
 )
-from inference.video_frame_reader import (
+from inference.core.video_frame_reader import (
     load_episode_image_frame_cache,
     load_episode_video_frame_cache,
     load_image_inputs_as_objects,
@@ -150,15 +149,13 @@ def infer_dense_delta_predictions_images_cached(
     target_views: Sequence[str],
     batch_size: int,
     global_build_workers: int,
-) -> Tuple[Dict[int, List[int | None]], Dict[str, float]]:
+) -> Dict[int, List[int | None]]:
     episode_predictions: Dict[int, List[int | None]] = {
         meta["episode_id"]: [None] * meta["num_pairs"] for meta in episode_metas
     }
     if len(episode_metas) == 0:
-        return episode_predictions, {"load_sec": 0.0, "build_sec": 0.0, "infer_sec": 0.0}
+        return episode_predictions
 
-    print(f"Loading frame caches for {len(episode_metas)} episodes")
-    load_start = time.perf_counter()
     frame_caches_by_episode: Dict[int, Dict[str, Dict[int, Any]]] = {}
     jobs: List[Dict[str, Any]] = []
     image_workers = max(1, int(global_build_workers))
@@ -169,10 +166,6 @@ def infer_dense_delta_predictions_images_cached(
             total_frames=int(episode_meta["T"]),
             image_workers=image_workers,
         )
-    load_sec = time.perf_counter() - load_start
-
-    build_start = time.perf_counter()
-    print(f"Building messages for {len(jobs)} jobs")
     build_message_fn = lambda job: _build_object_job_message(
         job,
         frame_caches_by_episode=frame_caches_by_episode,
@@ -184,24 +177,16 @@ def infer_dense_delta_predictions_images_cached(
         build_message_fn=build_message_fn,
         global_build_workers=global_build_workers,
     )
-    build_sec = time.perf_counter() - build_start
     if len(all_messages) == 0:
-        return episode_predictions, {"load_sec": load_sec, "build_sec": build_sec, "infer_sec": 0.0}
+        return episode_predictions
 
-    infer_start = time.perf_counter()
-    print(f"Inferring from {len(all_messages)} messages")
     all_predictions = inference.infer_from_messages_batch(
         all_messages,
         batch_size=batch_size,
     )
-    infer_sec = time.perf_counter() - infer_start
     for (episode_id, pair_idx), pred in zip(all_meta, all_predictions):
         episode_predictions[episode_id][pair_idx] = pred
-    return episode_predictions, {
-        "load_sec": load_sec,
-        "build_sec": build_sec,
-        "infer_sec": infer_sec,
-    }
+    return episode_predictions
 
 
 def infer_dense_delta_predictions_video_local(
@@ -211,17 +196,13 @@ def infer_dense_delta_predictions_video_local(
     target_views: Sequence[str],
     batch_size: int,
     global_build_workers: int,
-    ffmpeg_bin: str,
-    ffmpeg_workers: int,
-) -> Tuple[Dict[int, List[int | None]], Dict[str, float]]:
+) -> Dict[int, List[int | None]]:
     episode_predictions: Dict[int, List[int | None]] = {
         meta["episode_id"]: [None] * meta["num_pairs"] for meta in episode_metas
     }
     if len(episode_metas) == 0:
-        return episode_predictions, {"decode_sec": 0.0, "build_sec": 0.0, "infer_sec": 0.0}
+        return episode_predictions
 
-    decode_start = time.perf_counter()
-    print(f"Loading videos of {len(episode_metas)} episodes")
     frame_caches_by_episode: Dict[int, Dict[str, Dict[int, Any]]] = {}
     jobs: List[Dict[str, Any]] = []
     for episode_meta in episode_metas:
@@ -229,13 +210,9 @@ def infer_dense_delta_predictions_video_local(
         frame_caches_by_episode[episode_meta["episode_id"]] = load_episode_video_frame_cache(
             video_sources=episode_meta["video_sources"],
             total_frames=int(episode_meta["T"]),
-            ffmpeg_workers=ffmpeg_workers,
-            ffmpeg_bin=ffmpeg_bin,
+            ffmpeg_workers=VIDEO_LOCAL_FFMPEG_WORKERS,
+            ffmpeg_bin=VIDEO_LOCAL_FFMPEG_BIN,
         )
-    decode_sec = time.perf_counter() - decode_start
-
-    build_start = time.perf_counter()
-    print(f"Building messages for {len(jobs)} jobs")
     build_message_fn = lambda job: _build_object_job_message(
         job,
         frame_caches_by_episode=frame_caches_by_episode,
@@ -247,22 +224,13 @@ def infer_dense_delta_predictions_video_local(
         build_message_fn=build_message_fn,
         global_build_workers=global_build_workers,
     )
-    build_sec = time.perf_counter() - build_start
-
-    infer_start = time.perf_counter()
-    print(f"Inferring from {len(all_messages)} messages")
     all_predictions = inference.infer_from_messages_batch(
         all_messages,
         batch_size=batch_size,
     )
-    infer_sec = time.perf_counter() - infer_start
     for (episode_id, pair_idx), pred in zip(all_meta, all_predictions):
         episode_predictions[episode_id][pair_idx] = pred
-    return episode_predictions, {
-        "decode_sec": decode_sec,
-        "build_sec": build_sec,
-        "infer_sec": infer_sec,
-    }
+    return episode_predictions
 
 
 def run_dry_run_sharded(
@@ -270,8 +238,6 @@ def run_dry_run_sharded(
     reference_packs: Mapping[str, Dict[str, Any]],
     target_views: Sequence[str],
     input_mode: str,
-    ffmpeg_bin: str,
-    ffmpeg_workers: int,
 ) -> Dict[str, Any]:
     if len(episode_metas) == 0:
         payload = {"episodes": 0, "pairs": 0, "sample_message_items": 0, "sample_image_type": None}
@@ -327,8 +293,8 @@ def run_dry_run_sharded(
             first_episode["episode_id"]: load_episode_video_frame_cache(
                 video_sources=first_episode["video_sources"],
                 total_frames=int(first_episode["T"]),
-                ffmpeg_workers=ffmpeg_workers,
-                ffmpeg_bin=ffmpeg_bin,
+                ffmpeg_workers=VIDEO_LOCAL_FFMPEG_WORKERS,
+                ffmpeg_bin=VIDEO_LOCAL_FFMPEG_BIN,
             )
         }
         cached_reference_packs = _preload_reference_packs_as_objects(
@@ -418,64 +384,35 @@ def _worker_loop(
     args_dict: Mapping[str, Any],
     result_queue,
 ) -> None:
-    worker_start = time.perf_counter()
     stats_path = os.path.join(output_root, ".backfill_sharded", f"rank_{rank:02d}", "episodes_stats.jsonl")
     manifest_path = os.path.join(output_root, ".backfill_sharded", f"rank_{rank:02d}", "progress_sparse_predictions.jsonl")
     write_jsonl(stats_path, [])
     write_jsonl(manifest_path, [])
 
     try:
-        from inference.inferencer import DeltaProgressInference
+        from inference.core.inferencer import DeltaProgressInference
 
         inference = DeltaProgressInference(
             base_model_path=str(args_dict["base_model"]),
             adapter_path=str(args_dict["adapter"]),
             device=f"cuda:{gpu_id}",
         )
-        timings = {
-            "predict_sec": 0.0,
-            "reference_sec": 0.0,
-            "load_sec": 0.0,
-            "decode_sec": 0.0,
-            "build_sec": 0.0,
-            "infer_sec": 0.0,
-            "prepare_wait_sec": 0.0,
-            "prepare_cpu_sec": 0.0,
-            "transfer_sec": 0.0,
-            "generate_sec": 0.0,
-            "decode_output_sec": 0.0,
-            "write_sec": 0.0,
-        }
         pairs_completed = 0
         episodes_completed = 0
-        manifest_rows_written = 0
-        event_chunk_index = 0
 
         input_mode = str(args_dict["input_mode"])
         shard_chunks = list(chunked(list(episode_shard), int(args_dict["episode_chunk_size"])))
 
         if input_mode in ("images_cached", "video_local"):
-            reference_start = time.perf_counter()
             cached_reference_packs = _preload_reference_packs_as_objects(
                 reference_packs=reference_packs,
                 task_descs=[episode_meta["task_desc"] for episode_meta in episode_shard],
             )
-            timings["reference_sec"] += time.perf_counter() - reference_start
         else:
             cached_reference_packs = reference_packs
 
         for episode_chunk in shard_chunks:
-            print(f"Processing episode chunk {event_chunk_index} of {len(shard_chunks)}")
-            event_chunk_index += 1
-            predict_start = time.perf_counter()
-            batch_infer_stats = {
-                "prepare_wait_sec": 0.0,
-                "prepare_cpu_sec": 0.0,
-                "transfer_sec": 0.0,
-                "generate_sec": 0.0,
-                "decode_sec": 0.0,
-                "total_sec": 0.0,
-            }
+            chunk_pairs = sum(meta["num_pairs"] for meta in episode_chunk)
             if input_mode == "images":
                 global_jobs: List[Dict[str, Any]] = []
                 for episode_meta in episode_chunk:
@@ -490,13 +427,8 @@ def _worker_loop(
                     global_build_workers=int(args_dict["global_build_workers"]),
                     desc=f"worker{rank}-images",
                 )
-                chunk_pairs = len(global_jobs)
-                if chunk_pairs > 0:
-                    batch_infer_stats = inference.get_last_batch_stats()
-                predict_elapsed = time.perf_counter() - predict_start
-                timings["predict_sec"] += predict_elapsed
             elif input_mode == "images_cached":
-                episode_predictions, mode_timings = infer_dense_delta_predictions_images_cached(
+                episode_predictions = infer_dense_delta_predictions_images_cached(
                     inference=inference,
                     episode_metas=episode_chunk,
                     reference_packs=cached_reference_packs,
@@ -504,37 +436,15 @@ def _worker_loop(
                     batch_size=int(args_dict["batch_size"]),
                     global_build_workers=int(args_dict["global_build_workers"]),
                 )
-                chunk_pairs = sum(meta["num_pairs"] for meta in episode_chunk)
-                if chunk_pairs > 0:
-                    batch_infer_stats = inference.get_last_batch_stats()
-                timings["load_sec"] += mode_timings["load_sec"]
-                timings["build_sec"] += mode_timings["build_sec"]
-                timings["infer_sec"] += mode_timings["infer_sec"]
-                timings["predict_sec"] += time.perf_counter() - predict_start
             else:
-                episode_predictions, mode_timings = infer_dense_delta_predictions_video_local(
+                episode_predictions = infer_dense_delta_predictions_video_local(
                     inference=inference,
                     episode_metas=episode_chunk,
                     reference_packs=cached_reference_packs,
                     target_views=target_views,
                     batch_size=int(args_dict["batch_size"]),
                     global_build_workers=int(args_dict["global_build_workers"]),
-                    ffmpeg_bin=str(args_dict["ffmpeg_bin"]),
-                    ffmpeg_workers=int(args_dict["ffmpeg_workers"]),
                 )
-                chunk_pairs = sum(meta["num_pairs"] for meta in episode_chunk)
-                if chunk_pairs > 0:
-                    batch_infer_stats = inference.get_last_batch_stats()
-                timings["decode_sec"] += mode_timings["decode_sec"]
-                timings["build_sec"] += mode_timings["build_sec"]
-                timings["infer_sec"] += mode_timings["infer_sec"]
-                timings["predict_sec"] += time.perf_counter() - predict_start
-
-            timings["prepare_wait_sec"] += float(batch_infer_stats["prepare_wait_sec"])
-            timings["prepare_cpu_sec"] += float(batch_infer_stats["prepare_cpu_sec"])
-            timings["transfer_sec"] += float(batch_infer_stats["transfer_sec"])
-            timings["generate_sec"] += float(batch_infer_stats["generate_sec"])
-            timings["decode_output_sec"] += float(batch_infer_stats["decode_sec"])
 
             dense_delta_results = build_dense_delta_results(
                 episode_metas=episode_chunk,
@@ -542,7 +452,6 @@ def _worker_loop(
                 fill_missing_with_zero=True,
             )
 
-            write_start = time.perf_counter()
             manifest_rows_added = _write_worker_chunk_outputs(
                 episode_chunk=episode_chunk,
                 dense_delta_results=dense_delta_results,
@@ -552,22 +461,16 @@ def _worker_loop(
                 stats_path=stats_path,
                 manifest_path=manifest_path,
             )
-            timings["write_sec"] += time.perf_counter() - write_start
 
             pairs_completed += chunk_pairs
             episodes_completed += len(episode_chunk)
-            manifest_rows_written += manifest_rows_added
             result_queue.put((
                 "progress",
                 rank,
                 {
-                    "chunk_index": event_chunk_index,
-                    "episodes_completed": episodes_completed,
-                    "pairs_completed": pairs_completed,
                     "episodes_in_chunk": len(episode_chunk),
                     "pairs_in_chunk": chunk_pairs,
                     "manifest_rows_added": manifest_rows_added,
-                    "timings": dict(timings),
                 },
             ))
 
@@ -576,15 +479,8 @@ def _worker_loop(
             "done",
             rank,
             {
-                "episodes_completed": episodes_completed,
-                "pairs_completed": pairs_completed,
-                "manifest_rows_written": manifest_rows_written,
                 "stats_path": stats_path,
                 "manifest_path": manifest_path,
-                "timings": {
-                    **timings,
-                    "total_sec": time.perf_counter() - worker_start,
-                },
             },
         ))
     except Exception:
@@ -696,38 +592,21 @@ def _run_backfill_sharded(args: argparse.Namespace) -> None:
         enabled=bool(args.wandb_project or args.wandb_run_name),
         project=args.wandb_project,
         run_name=args.wandb_run_name,
-        group=None,
-        tags=None,
         total_episodes=len(episode_metas),
         total_pairs=total_pairs,
-        total_tasks=num_tasks,
-        args=args,
-        image_transport=args.input_mode,
-        dispatch_mode="episode_sharded",
     )
-    tracker.log_start(
-        target_views=target_views,
-        view_mapping=view_mapping,
-        source_task_map_path=source_task_map_path,
-        reference_tasks=len(reference_packs),
-        orphan_parquet_count=len(orphan_paths),
-        image_transport=args.input_mode,
-        dispatch_mode="episode_sharded",
-    )
+    tracker.log_start()
 
     if args.dry_run:
-        dry_run_stats = run_dry_run_sharded(
+        run_dry_run_sharded(
             episode_metas=episode_metas[: max(1, min(len(episode_metas), args.episode_chunk_size))],
             reference_packs=reference_packs,
             target_views=target_views,
             input_mode=args.input_mode,
-            ffmpeg_bin=VIDEO_LOCAL_FFMPEG_BIN,
-            ffmpeg_workers=VIDEO_LOCAL_FFMPEG_WORKERS,
         )
-        tracker.log_dry_run(dry_run_stats=dry_run_stats)
+        tracker.log_dry_run()
         tracker.log_finish(
             status="dry_run_done",
-            manifest_rows=0,
             pairs_completed=0,
             episodes_completed=0,
         )
@@ -755,8 +634,6 @@ def _run_backfill_sharded(args: argparse.Namespace) -> None:
         "global_build_workers": args.global_build_workers,
         "episode_chunk_size": args.episode_chunk_size,
         "input_mode": args.input_mode,
-        "ffmpeg_bin": VIDEO_LOCAL_FFMPEG_BIN,
-        "ffmpeg_workers": VIDEO_LOCAL_FFMPEG_WORKERS,
     }
     for rank, episode_shard in enumerate(active_shards):
         worker = ctx.Process(
@@ -782,16 +659,8 @@ def _run_backfill_sharded(args: argparse.Namespace) -> None:
     pairs_completed = 0
     episodes_completed = 0
     completed_workers = 0
-    total_progress_events = sum(
-        len(list(chunked(list(shard), args.episode_chunk_size)))
-        if args.input_mode in ("images", "images_cached")
-        else len(shard)
-        for shard in active_shards
-    )
-    progress_event_index = 0
     shard_stats_paths: List[str] = []
     shard_manifest_paths: List[str] = []
-    worker_summaries: Dict[int, Dict[str, Any]] = {}
     exit_code = 0
 
     try:
@@ -801,30 +670,18 @@ def _run_backfill_sharded(args: argparse.Namespace) -> None:
                 exit_code = 1
                 raise RuntimeError(f"[worker {rank}] 失败:\n{payload}")
             if event_type == "progress":
-                progress_event_index += 1
                 pairs_completed += int(payload["pairs_in_chunk"])
                 episodes_completed += int(payload["episodes_in_chunk"])
                 manifest_rows_written += int(payload["manifest_rows_added"])
                 tracker.log_episode_chunk(
-                    episode_chunk_index=progress_event_index,
-                    total_episode_chunks=total_progress_events,
                     episodes_in_chunk=int(payload["episodes_in_chunk"]),
                     pairs_in_chunk=int(payload["pairs_in_chunk"]),
-                    missing_pairs_in_chunk=0,
-                    manifest_rows=manifest_rows_written,
                     pairs_completed=pairs_completed,
                     episodes_completed=episodes_completed,
                 )
-                tqdm_message = (
-                    f"[worker {rank}] episodes={payload['episodes_completed']} "
-                    f"pairs={payload['pairs_completed']} "
-                    f"timing={payload['timings']}"
-                )
-                print(tqdm_message)
                 continue
             if event_type == "done":
                 completed_workers += 1
-                worker_summaries[rank] = payload
                 shard_stats_paths.append(payload["stats_path"])
                 shard_manifest_paths.append(payload["manifest_path"])
 
@@ -849,32 +706,20 @@ def _run_backfill_sharded(args: argparse.Namespace) -> None:
             delta_feature_name=DELTA_FEATURE_NAME,
             verify_samples=args.verify_samples,
         )
-
-        timing_rows = []
-        aggregate_total_sec = 0.0
-        for rank in sorted(worker_summaries):
-            summary = worker_summaries[rank]
-            timing_rows.append((f"worker_{rank}", summary["timings"]))
-            aggregate_total_sec += float(summary["timings"]["total_sec"])
-        _print_block("worker_timing_summary", timing_rows)
         _print_block("backfill_sharded_done", [
             ("output_root", args.output_root),
             ("episodes", len(episode_metas)),
             ("manifest_rows", manifest_rows_written),
             ("verify_samples", args.verify_samples),
-            ("aggregate_worker_total_sec", round(aggregate_total_sec, 3)),
         ])
         tracker.log_finish(
             status="completed",
-            manifest_rows=manifest_rows_written,
             pairs_completed=pairs_completed,
             episodes_completed=episodes_completed,
         )
     except Exception as exc:
         exit_code = 1
         tracker.log_failure(
-            error_type=type(exc).__name__,
-            error_message=str(exc),
             pairs_completed=pairs_completed,
             episodes_completed=episodes_completed,
         )

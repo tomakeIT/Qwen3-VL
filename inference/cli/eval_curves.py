@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import argparse
 
-from inference.curve_eval import run_eval_curves
+from inference.eval.curve_eval import run_eval_curves
 
 
 def build_parser() -> argparse.ArgumentParser:

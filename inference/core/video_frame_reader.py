@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Sequence
 
 from PIL import Image
 
-from inference.lerobot_io import LeRobotVideoSource
+from inference.core.lerobot_io import LeRobotVideoSource
 
 
 def frame_file_name(frame_index: int) -> str:

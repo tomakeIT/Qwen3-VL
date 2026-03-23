@@ -7,7 +7,7 @@ RUN_NAME="lerobot_backfill_6tasks"
 
 export WANDB_PROJECT="qwen3vl-rewardmodel"
 
-python3 -m inference.backfill \
+python3 -m inference.cli.backfill \
     --adapter $ADAPTER \
     --dataset-root $DATASET_ROOT \
     --output-root $OUTPUT_ROOT \

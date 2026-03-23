@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import argparse
 import json
 import os
 import random
@@ -13,19 +12,19 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 from tqdm import tqdm
 
-from inference.demo_utils import (
+from inference.core.demo_utils import (
     build_messages_for_job_chunk,
     build_messages_from_inputs,
     sample_reference_demo_pack,
 )
-from inference.io_utils import load_json_or_yaml
-from inference.lerobot_io import (
+from inference.core.io_utils import load_json_or_yaml
+from inference.core.lerobot_io import (
     ensure_parent_dir,
     load_lerobot_info,
     resolve_episode_parquet_path,
     update_huggingface_metadata,
 )
-from inference.video_frame_reader import load_episode_image_dirs, resolve_frame_path
+from inference.core.video_frame_reader import load_episode_image_dirs, resolve_frame_path
 
 DELTA_FEATURE_NAME = "prediction.progress_delta"
 TASK_MAP_CANDIDATE_FILES = ("task_descriptions.json", "task_map.json")
@@ -44,19 +43,12 @@ class BackfillWandbTracker:
         enabled: bool,
         project: Optional[str],
         run_name: Optional[str],
-        group: Optional[str],
-        tags: Optional[Sequence[str]],
         total_episodes: int,
         total_pairs: int,
-        total_tasks: int,
-        args: argparse.Namespace,
-        image_transport: str,
-        dispatch_mode: str,
     ) -> None:
         self.enabled = bool(enabled)
         self.total_episodes = int(total_episodes)
         self.total_pairs = int(total_pairs)
-        self.total_tasks = int(total_tasks)
         self._start_time = time.time()
         self._wandb = None
         self._run = None
@@ -76,8 +68,6 @@ class BackfillWandbTracker:
         self._run = wandb.init(
             project=project,
             name=run_name,
-            group=group,
-            tags=list(tags or []),
             job_type="backfill",
         )
 
@@ -117,23 +107,13 @@ class BackfillWandbTracker:
             return
         self._wandb.log(payload)
 
-    def log_start(
-        self,
-        *,
-        target_views: Sequence[str],
-        view_mapping: Mapping[str, str],
-        source_task_map_path: Optional[str],
-        reference_tasks: int,
-        orphan_parquet_count: int,
-        image_transport: str,
-        dispatch_mode: str,
-    ) -> None:
+    def log_start(self) -> None:
         self._log({
             "status/event": "start",
             **self._progress_payload(pairs_completed=0, episodes_completed=0),
         })
 
-    def log_dry_run(self, *, dry_run_stats: Mapping[str, Any]) -> None:
+    def log_dry_run(self) -> None:
         self._log({
             "status/event": "dry_run",
             **self._progress_payload(pairs_completed=0, episodes_completed=0),
@@ -142,12 +122,8 @@ class BackfillWandbTracker:
     def log_episode_chunk(
         self,
         *,
-        episode_chunk_index: int,
-        total_episode_chunks: int,
         episodes_in_chunk: int,
         pairs_in_chunk: int,
-        missing_pairs_in_chunk: int,
-        manifest_rows: int,
         pairs_completed: int,
         episodes_completed: int,
     ) -> None:
@@ -165,7 +141,6 @@ class BackfillWandbTracker:
         self,
         *,
         status: str,
-        manifest_rows: int,
         pairs_completed: int,
         episodes_completed: int,
     ) -> None:
@@ -180,8 +155,6 @@ class BackfillWandbTracker:
     def log_failure(
         self,
         *,
-        error_type: str,
-        error_message: str,
         pairs_completed: int,
         episodes_completed: int,
     ) -> None:

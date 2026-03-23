@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Mapping, Sequence
 import numpy as np
 from tqdm import tqdm
 
-from inference.backfill_common import (
+from inference.backfill.common import (
     DELTA_FEATURE_NAME,
     BackfillWandbTracker,
     _print_block,
@@ -31,8 +31,8 @@ from inference.backfill_common import (
     validate_output_dataset,
     write_augmented_parquet,
 )
-from inference.io_utils import load_config_namespace
-from inference.lerobot_io import (
+from inference.core.io_utils import load_config_namespace
+from inference.core.lerobot_io import (
     clone_info_with_new_float_features,
     find_orphan_episode_files,
     load_lerobot_episode_stats_rows,
@@ -218,24 +218,10 @@ def _run_backfill(args: argparse.Namespace) -> None:
         enabled=bool(args.wandb_project or args.wandb_run_name),
         project=args.wandb_project,
         run_name=args.wandb_run_name,
-        group=None,
-        tags=None,
         total_episodes=len(episode_metas),
         total_pairs=total_pairs,
-        total_tasks=num_tasks,
-        args=args,
-        image_transport="path_only",
-        dispatch_mode="message_queue",
     )
-    tracker.log_start(
-        target_views=target_views,
-        view_mapping=view_mapping,
-        source_task_map_path=source_task_map_path,
-        reference_tasks=len(reference_packs),
-        orphan_parquet_count=len(orphan_paths),
-        image_transport="path_only",
-        dispatch_mode="message_queue",
-    )
+    tracker.log_start()
 
     pairs_completed = 0
     episodes_completed = 0
@@ -243,15 +229,14 @@ def _run_backfill(args: argparse.Namespace) -> None:
     try:
         if args.dry_run:
             dry_run_metas = episode_metas[: max(1, min(len(episode_metas), args.episode_chunk_size))]
-            dry_run_stats = run_dry_run(
+            run_dry_run(
                 episode_metas=dry_run_metas,
                 reference_packs=reference_packs,
                 target_views=target_views,
             )
-            tracker.log_dry_run(dry_run_stats=dry_run_stats)
+            tracker.log_dry_run()
             tracker.log_finish(
                 status="dry_run_done",
-                manifest_rows=0,
                 pairs_completed=0,
                 episodes_completed=0,
             )
@@ -273,7 +258,7 @@ def _run_backfill(args: argparse.Namespace) -> None:
         write_jsonl(delta_manifest_path, [])
         manifest_rows_written = 0
 
-        from inference.multi_gpu_inferencer import MultiGPUDeltaProgressInference
+        from inference.core.multi_gpu_inferencer import MultiGPUDeltaProgressInference
 
         inference = MultiGPUDeltaProgressInference(
             base_model_path=args.base_model,
@@ -344,16 +329,9 @@ def _run_backfill(args: argparse.Namespace) -> None:
 
                 pairs_completed += len(global_jobs)
                 episodes_completed += len(episode_chunk)
-                missing_pairs_in_chunk = sum(
-                    len(dense_result["missing_pair_indices"]) for dense_result in dense_delta_results
-                )
                 tracker.log_episode_chunk(
-                    episode_chunk_index=chunk_idx,
-                    total_episode_chunks=len(chunk_list),
                     episodes_in_chunk=len(episode_chunk),
                     pairs_in_chunk=len(global_jobs),
-                    missing_pairs_in_chunk=missing_pairs_in_chunk,
-                    manifest_rows=manifest_rows_written,
                     pairs_completed=pairs_completed,
                     episodes_completed=episodes_completed,
                 )
@@ -378,15 +356,12 @@ def _run_backfill(args: argparse.Namespace) -> None:
         ])
         tracker.log_finish(
             status="completed",
-            manifest_rows=manifest_rows_written,
             pairs_completed=pairs_completed,
             episodes_completed=episodes_completed,
         )
     except Exception as exc:
         exit_code = 1
         tracker.log_failure(
-            error_type=type(exc).__name__,
-            error_message=str(exc),
             pairs_completed=pairs_completed,
             episodes_completed=episodes_completed,
         )

@@ -10,8 +10,8 @@ import os
 import random
 from typing import Any, Dict, List, Optional
 
-from inference.curve_eval import run_eval_curves
-from inference.io_utils import load_json
+from inference.eval.curve_eval import run_eval_curves
+from inference.core.io_utils import load_json
 
 
 def _resolve_episode_path(raw_dataset_root: str, task: str, episode_id: str) -> str:

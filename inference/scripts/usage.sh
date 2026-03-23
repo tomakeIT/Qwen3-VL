@@ -7,14 +7,14 @@ TASK_DECRIPTION="Put the white mug on the plate"
 CONFIG=dataset/build_config.yaml
 
 
-python3 -m inference.eval_pairwise \
+python3 -m inference.cli.eval_pairwise \
     --adapter $ADAPTER_PATH \
     --data-samples $DATA_SAMPLES_PATH \
     --data-root $DATA_ROOT \
     --batch-size 64
 
 
-python3 -m inference.pairwise_demo \
+python3 -m inference.cli.pairwise_demo \
     --adapter $ADAPTER_PATH \
     --target-demo $TARGET_DEMO_PATH \
     --i 3 --j 20 \
@@ -22,7 +22,7 @@ python3 -m inference.pairwise_demo \
     --task-desc "$TASK_DECRIPTION" \
     --config $CONFIG
 
-python3 -m inference.curve_demo \
+python3 -m inference.cli.curve_demo \
     --adapter $ADAPTER_PATH \
     --target-demo $TARGET_DEMO_PATH \
     --reference-demo $REFERENCE_DEMO_PATH \
@@ -32,7 +32,7 @@ python3 -m inference.curve_demo \
     --output-dir outputs/inference_progress_curve \
     --output-fps 2.0
 
-python3 -m inference.eval_curves \
+python3 -m inference.cli.eval_curves \
     --adapter $ADAPTER_PATH \
     --demo-list /home/lightwheel/erdao.liang/Qwen3-VL/utils/train_eval_split_index.json \
     --reference-demo $REFERENCE_DEMO_PATH \

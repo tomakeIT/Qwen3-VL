@@ -23,7 +23,7 @@ def _resolve_process_vision_info():
         return process_vision_info
     except ImportError:
         vision_process_path = (
-            Path(__file__).resolve().parent.parent
+            Path(__file__).resolve().parent.parent.parent
             / "qwen-vl-utils"
             / "src"
             / "qwen_vl_utils"

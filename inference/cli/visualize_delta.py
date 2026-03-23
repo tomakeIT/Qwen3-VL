@@ -6,9 +6,9 @@ from typing import Any, Dict, List, Sequence, Tuple
 
 import numpy as np
 
-from inference.io_utils import load_jsonl_rows
-from inference.metrics import calc_total_variation, compute_ground_truth_delta_curve
-from inference.viz_utils import (
+from inference.core.io_utils import load_jsonl_rows
+from inference.core.metrics import calc_total_variation, compute_ground_truth_delta_curve
+from inference.viz.viz_utils import (
     build_summary_payload as build_viz_summary_payload,
     group_items_by,
     resolve_default_output_dir,

@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 from tqdm import tqdm
 
-from inference.io_utils import load_json
+from inference.core.io_utils import load_json
 from utils.data_formatting import data_sample_to_messages_and_answer
 
 
@@ -67,7 +67,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(args: argparse.Namespace) -> None:
-    from inference.multi_gpu_inferencer import MultiGPUDeltaProgressInference
+    from inference.core.multi_gpu_inferencer import MultiGPUDeltaProgressInference
 
     inference = MultiGPUDeltaProgressInference(
         base_model_path=args.base_model,

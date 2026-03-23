@@ -6,8 +6,8 @@ from __future__ import annotations
 
 import argparse
 
-from inference.demo_utils import build_messages_from_demo, scan_demo_frames
-from inference.io_utils import load_config_namespace
+from inference.core.demo_utils import build_messages_from_demo, scan_demo_frames
+from inference.core.io_utils import load_config_namespace
 from utils.data_formatting import compute_delta_progress_label_int
 
 
@@ -25,7 +25,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(args: argparse.Namespace) -> None:
-    from inference.inferencer import DeltaProgressInference
+    from inference.core.inferencer import DeltaProgressInference
 
     config = load_config_namespace(args.config)
     target_views = config.sampling.required_views

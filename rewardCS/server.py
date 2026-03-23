@@ -13,7 +13,7 @@ from pydantic import BaseModel
 # Add parent directory to sys.path to allow imports from utils and inference
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from inference.inferencer import DeltaProgressInference
+from inference.core.inferencer import DeltaProgressInference
 from utils.data_formatting import build_qwen_messages
 from utils.utils import list_image_files
 from utils.frame_sampling import sample_reference_frames_from_demo
