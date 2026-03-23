@@ -1,0 +1,17 @@
+ClearingTheCuttingBoard
+CloseCabinet
+CloseElectricKettleLid
+CloseToasterOvenDoor
+ColorfulSalsa
+DryDishes
+PnPCounterToSink
+PnPSinkToCounter
+PnPCounterToMicrowave
+PnPCounterToOven
+PnPOvenToCounter
+PnPCounterToStove
+PnPStoveToCounter
+PnPToasterToCounter
+PnPCounterToToasterOven
+PnPToasterOvenToCounter
+PnPCounterToStandMixer
