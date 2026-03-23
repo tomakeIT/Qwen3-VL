@@ -2,7 +2,7 @@ import json
 import os
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Dict, Sequence
+from typing import Any, Dict, List, Sequence
 
 from PIL import Image
 
@@ -31,6 +31,26 @@ def load_episode_image_dirs(
     return image_dirs
 
 
+def load_image_inputs_as_objects(image_inputs: Sequence[Any]) -> List[Any]:
+    loaded_inputs: List[Any] = []
+    for image_input in image_inputs:
+        if isinstance(image_input, Image.Image):
+            loaded_inputs.append(image_input.copy())
+            continue
+        if not isinstance(image_input, str):
+            loaded_inputs.append(image_input)
+            continue
+
+        if image_input.startswith(("http://", "https://", "data:image")):
+            loaded_inputs.append(image_input)
+            continue
+
+        image_path = image_input[7:] if image_input.startswith("file://") else image_input
+        with Image.open(image_path) as image:
+            loaded_inputs.append(image.convert("RGB").copy())
+    return loaded_inputs
+
+
 def _load_frames_from_image_cache(
     image_dir: str,
     frame_indices: Sequence[int],
@@ -43,6 +63,33 @@ def _load_frames_from_image_cache(
         with Image.open(frame_path) as image:
             frame_cache[int(frame_index)] = image.convert("RGB").copy()
     return frame_cache
+
+
+def load_episode_image_frame_cache(
+    video_sources: Dict[str, LeRobotVideoSource],
+    total_frames: int,
+    image_workers: int = 1,
+) -> Dict[str, Dict[int, Image.Image]]:
+    frame_indices = list(range(total_frames))
+
+    def _load_single_view(video_source: LeRobotVideoSource):
+        image_dir = video_source.image_dir
+        if not image_dir or not os.path.isdir(image_dir):
+            raise FileNotFoundError(
+                f"缺少预处理后的 images 目录: target_view={video_source.target_view}, image_dir={image_dir}"
+            )
+        return video_source.target_view, _load_frames_from_image_cache(
+            image_dir=image_dir,
+            frame_indices=frame_indices,
+        )
+
+    frame_caches: Dict[str, Dict[int, Image.Image]] = {}
+    max_workers = max(1, min(image_workers, len(video_sources)))
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        iterator = executor.map(_load_single_view, video_sources.values())
+        for target_view, target_view_frames in iterator:
+            frame_caches[target_view] = target_view_frames
+    return frame_caches
 
 
 def _build_select_filter(frame_indices: Sequence[int]) -> str:

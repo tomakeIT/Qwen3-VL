@@ -46,7 +46,11 @@ from inference.lerobot_io import (
     write_json,
     write_jsonl,
 )
-from inference.video_frame_reader import load_episode_video_frame_cache
+from inference.video_frame_reader import (
+    load_episode_image_frame_cache,
+    load_episode_video_frame_cache,
+    load_image_inputs_as_objects,
+)
 
 
 def _dump_profile_stats(profiler: cProfile.Profile, *, profile_output: str) -> None:
@@ -80,7 +84,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--num-gpus", type=int, default=1, help="使用的 GPU 数量")
     parser.add_argument("--global-build-workers", type=int, default=8, help="单个 worker 内构建 Qwen messages 的线程数")
     parser.add_argument("--episode-chunk-size", type=int, default=1, help="单个 worker 每轮处理多少个 episode")
-    parser.add_argument("--input-mode", choices=("images", "video_local"), default="images", help="worker 本地读取模式")
+    parser.add_argument(
+        "--input-mode",
+        choices=("images", "images_cached", "video_local"),
+        default="images",
+        help="worker 本地读取模式",
+    )
     parser.add_argument("--ffmpeg-bin", type=str, default="ffmpeg", help="video_local 模式使用的 ffmpeg 可执行文件")
     parser.add_argument("--ffmpeg-workers", type=int, default=2, help="video_local 模式单个 worker 内并行解码视角数")
     parser.add_argument("--seed", type=int, default=42)
@@ -104,7 +113,21 @@ def _normalize_num_gpus(requested_num_gpus: int) -> int:
     return min(requested_num_gpus, available_gpus)
 
 
-def _build_video_job_message(
+def _preload_reference_packs_as_objects(
+    reference_packs: Mapping[str, Dict[str, Any]],
+    task_descs: Sequence[str],
+) -> Dict[str, Dict[str, Any]]:
+    preloaded_reference_packs: Dict[str, Dict[str, Any]] = {}
+    for task_desc in sorted(set(task_descs)):
+        reference_pack = reference_packs[task_desc]
+        preloaded_reference_packs[task_desc] = {
+            **reference_pack,
+            "reference_inputs": load_image_inputs_as_objects(reference_pack["reference_inputs"]),
+        }
+    return preloaded_reference_packs
+
+
+def _build_object_job_message(
     job: Dict[str, Any],
     frame_caches_by_episode: Mapping[int, Dict[str, Dict[int, Any]]],
     reference_packs: Mapping[str, Dict[str, Any]],
@@ -124,6 +147,64 @@ def _build_video_job_message(
         task_desc=job["task_desc"],
     )
     return job["episode_id"], job["pair_idx"], messages
+
+
+def infer_dense_delta_predictions_images_cached(
+    inference,
+    episode_metas: Sequence[Dict[str, Any]],
+    reference_packs: Mapping[str, Dict[str, Any]],
+    target_views: Sequence[str],
+    batch_size: int,
+    global_build_workers: int,
+) -> Tuple[Dict[int, List[int | None]], Dict[str, float]]:
+    episode_predictions: Dict[int, List[int | None]] = {
+        meta["episode_id"]: [None] * meta["num_pairs"] for meta in episode_metas
+    }
+    if len(episode_metas) == 0:
+        return episode_predictions, {"load_sec": 0.0, "build_sec": 0.0, "infer_sec": 0.0}
+
+    load_start = time.perf_counter()
+    frame_caches_by_episode: Dict[int, Dict[str, Dict[int, Any]]] = {}
+    jobs: List[Dict[str, Any]] = []
+    image_workers = max(1, min(int(global_build_workers), len(target_views)))
+    for episode_meta in episode_metas:
+        jobs.extend(build_episode_jobs(episode_meta))
+        frame_caches_by_episode[episode_meta["episode_id"]] = load_episode_image_frame_cache(
+            video_sources=episode_meta["video_sources"],
+            total_frames=int(episode_meta["T"]),
+            image_workers=image_workers,
+        )
+    load_sec = time.perf_counter() - load_start
+
+    build_start = time.perf_counter()
+    build_message_fn = lambda job: _build_object_job_message(
+        job,
+        frame_caches_by_episode=frame_caches_by_episode,
+        reference_packs=reference_packs,
+        target_views=target_views,
+    )
+    all_meta, all_messages = build_messages_for_job_chunk(
+        jobs=jobs,
+        build_message_fn=build_message_fn,
+        global_build_workers=global_build_workers,
+    )
+    build_sec = time.perf_counter() - build_start
+    if len(all_messages) == 0:
+        return episode_predictions, {"load_sec": load_sec, "build_sec": build_sec, "infer_sec": 0.0}
+
+    infer_start = time.perf_counter()
+    all_predictions = inference.infer_from_messages_batch(
+        all_messages,
+        batch_size=batch_size,
+    )
+    infer_sec = time.perf_counter() - infer_start
+    for (episode_id, pair_idx), pred in zip(all_meta, all_predictions):
+        episode_predictions[episode_id][pair_idx] = pred
+    return episode_predictions, {
+        "load_sec": load_sec,
+        "build_sec": build_sec,
+        "infer_sec": infer_sec,
+    }
 
 
 def infer_dense_delta_predictions_video_local(
@@ -156,7 +237,7 @@ def infer_dense_delta_predictions_video_local(
     decode_sec = time.perf_counter() - decode_start
 
     build_start = time.perf_counter()
-    build_message_fn = lambda job: _build_video_job_message(
+    build_message_fn = lambda job: _build_object_job_message(
         job,
         frame_caches_by_episode=frame_caches_by_episode,
         reference_packs=reference_packs,
@@ -221,6 +302,25 @@ def run_dry_run_sharded(
             reference_packs=reference_packs,
             target_views=target_views,
         )
+    elif input_mode == "images_cached":
+        sample_target_input_type = "Image"
+        frame_caches_by_episode = {
+            first_episode["episode_id"]: load_episode_image_frame_cache(
+                video_sources=first_episode["video_sources"],
+                total_frames=int(first_episode["T"]),
+                image_workers=len(target_views),
+            )
+        }
+        cached_reference_packs = _preload_reference_packs_as_objects(
+            reference_packs=reference_packs,
+            task_descs=[first_episode["task_desc"]],
+        )
+        _, _, messages = _build_object_job_message(
+            sample_job,
+            frame_caches_by_episode=frame_caches_by_episode,
+            reference_packs=cached_reference_packs,
+            target_views=target_views,
+        )
     else:
         sample_target_input_type = "Image"
         frame_caches_by_episode = {
@@ -231,7 +331,7 @@ def run_dry_run_sharded(
                 ffmpeg_bin=ffmpeg_bin,
             )
         }
-        _, _, messages = _build_video_job_message(
+        _, _, messages = _build_object_job_message(
             sample_job,
             frame_caches_by_episode=frame_caches_by_episode,
             reference_packs=reference_packs,
@@ -330,6 +430,8 @@ def _worker_loop(
         )
         timings = {
             "predict_sec": 0.0,
+            "reference_sec": 0.0,
+            "load_sec": 0.0,
             "decode_sec": 0.0,
             "build_sec": 0.0,
             "infer_sec": 0.0,
@@ -340,15 +442,26 @@ def _worker_loop(
         manifest_rows_written = 0
         event_chunk_index = 0
 
-        if args_dict["input_mode"] == "images":
+        input_mode = str(args_dict["input_mode"])
+        if input_mode in ("images", "images_cached"):
             shard_chunks = list(chunked(list(episode_shard), int(args_dict["episode_chunk_size"])))
         else:
             shard_chunks = [[episode_meta] for episode_meta in episode_shard]
 
+        if input_mode == "images_cached":
+            reference_start = time.perf_counter()
+            cached_reference_packs = _preload_reference_packs_as_objects(
+                reference_packs=reference_packs,
+                task_descs=[episode_meta["task_desc"] for episode_meta in episode_shard],
+            )
+            timings["reference_sec"] += time.perf_counter() - reference_start
+        else:
+            cached_reference_packs = reference_packs
+
         for episode_chunk in shard_chunks:
             event_chunk_index += 1
             predict_start = time.perf_counter()
-            if args_dict["input_mode"] == "images":
+            if input_mode == "images":
                 global_jobs: List[Dict[str, Any]] = []
                 for episode_meta in episode_chunk:
                     global_jobs.extend(build_episode_jobs(episode_meta))
@@ -365,6 +478,20 @@ def _worker_loop(
                 chunk_pairs = len(global_jobs)
                 predict_elapsed = time.perf_counter() - predict_start
                 timings["predict_sec"] += predict_elapsed
+            elif input_mode == "images_cached":
+                episode_predictions, mode_timings = infer_dense_delta_predictions_images_cached(
+                    inference=inference,
+                    episode_metas=episode_chunk,
+                    reference_packs=cached_reference_packs,
+                    target_views=target_views,
+                    batch_size=int(args_dict["batch_size"]),
+                    global_build_workers=int(args_dict["global_build_workers"]),
+                )
+                chunk_pairs = sum(meta["num_pairs"] for meta in episode_chunk)
+                timings["load_sec"] += mode_timings["load_sec"]
+                timings["build_sec"] += mode_timings["build_sec"]
+                timings["infer_sec"] += mode_timings["infer_sec"]
+                timings["predict_sec"] += time.perf_counter() - predict_start
             else:
                 episode_predictions, mode_timings = infer_dense_delta_predictions_video_local(
                     inference=inference,
@@ -633,7 +760,9 @@ def _run_backfill_sharded(args: argparse.Namespace) -> None:
     episodes_completed = 0
     completed_workers = 0
     total_progress_events = sum(
-        len(list(chunked(list(shard), args.episode_chunk_size))) if args.input_mode == "images" else len(shard)
+        len(list(chunked(list(shard), args.episode_chunk_size)))
+        if args.input_mode in ("images", "images_cached")
+        else len(shard)
         for shard in active_shards
     )
     progress_event_index = 0
