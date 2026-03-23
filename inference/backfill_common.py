@@ -486,6 +486,7 @@ def infer_dense_delta_predictions(
     if len(global_jobs) == 0:
         return episode_predictions
 
+    print("Building episode image dirs")
     image_dirs_by_episode = build_episode_image_dirs(episode_metas=episode_metas)
     build_message_fn = partial(
         build_lerobot_job_message,
@@ -493,6 +494,7 @@ def infer_dense_delta_predictions(
         reference_packs=reference_packs,
         target_views=target_views,
     )
+    print("Building messages for job chunk")
     all_meta, all_messages = build_messages_for_job_chunk(
         jobs=global_jobs,
         build_message_fn=build_message_fn,
@@ -501,10 +503,12 @@ def infer_dense_delta_predictions(
     if len(all_messages) == 0:
         return episode_predictions
 
+    print("Inferring from messages batch")
     all_predictions = inference.infer_from_messages_batch(
         all_messages,
         batch_size=batch_size,
     )
+    print("Saving predictions")
     for (episode_id, pair_idx), pred in zip(all_meta, all_predictions):
         episode_predictions[episode_id][pair_idx] = pred
     return episode_predictions

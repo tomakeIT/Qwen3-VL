@@ -157,6 +157,7 @@ def infer_dense_delta_predictions_images_cached(
     if len(episode_metas) == 0:
         return episode_predictions, {"load_sec": 0.0, "build_sec": 0.0, "infer_sec": 0.0}
 
+    print(f"Loading frame caches for {len(episode_metas)} episodes")
     load_start = time.perf_counter()
     frame_caches_by_episode: Dict[int, Dict[str, Dict[int, Any]]] = {}
     jobs: List[Dict[str, Any]] = []
@@ -171,6 +172,7 @@ def infer_dense_delta_predictions_images_cached(
     load_sec = time.perf_counter() - load_start
 
     build_start = time.perf_counter()
+    print(f"Building messages for {len(jobs)} jobs")
     build_message_fn = lambda job: _build_object_job_message(
         job,
         frame_caches_by_episode=frame_caches_by_episode,
@@ -187,6 +189,7 @@ def infer_dense_delta_predictions_images_cached(
         return episode_predictions, {"load_sec": load_sec, "build_sec": build_sec, "infer_sec": 0.0}
 
     infer_start = time.perf_counter()
+    print(f"Inferring from {len(all_messages)} messages")
     all_predictions = inference.infer_from_messages_batch(
         all_messages,
         batch_size=batch_size,
@@ -218,6 +221,7 @@ def infer_dense_delta_predictions_video_local(
         return episode_predictions, {"decode_sec": 0.0, "build_sec": 0.0, "infer_sec": 0.0}
 
     decode_start = time.perf_counter()
+    print(f"Loading videos of {len(episode_metas)} episodes")
     frame_caches_by_episode: Dict[int, Dict[str, Dict[int, Any]]] = {}
     jobs: List[Dict[str, Any]] = []
     for episode_meta in episode_metas:
@@ -231,6 +235,7 @@ def infer_dense_delta_predictions_video_local(
     decode_sec = time.perf_counter() - decode_start
 
     build_start = time.perf_counter()
+    print(f"Building messages for {len(jobs)} jobs")
     build_message_fn = lambda job: _build_object_job_message(
         job,
         frame_caches_by_episode=frame_caches_by_episode,
@@ -245,6 +250,7 @@ def infer_dense_delta_predictions_video_local(
     build_sec = time.perf_counter() - build_start
 
     infer_start = time.perf_counter()
+    print(f"Inferring from {len(all_messages)} messages")
     all_predictions = inference.infer_from_messages_batch(
         all_messages,
         batch_size=batch_size,
@@ -446,10 +452,7 @@ def _worker_loop(
         event_chunk_index = 0
 
         input_mode = str(args_dict["input_mode"])
-        if input_mode in ("images", "images_cached"):
-            shard_chunks = list(chunked(list(episode_shard), int(args_dict["episode_chunk_size"])))
-        else:
-            shard_chunks = [[episode_meta] for episode_meta in episode_shard]
+        shard_chunks = list(chunked(list(episode_shard), int(args_dict["episode_chunk_size"])))
 
         if input_mode in ("images_cached", "video_local"):
             reference_start = time.perf_counter()
@@ -462,6 +465,7 @@ def _worker_loop(
             cached_reference_packs = reference_packs
 
         for episode_chunk in shard_chunks:
+            print(f"Processing episode chunk {event_chunk_index} of {len(shard_chunks)}")
             event_chunk_index += 1
             predict_start = time.perf_counter()
             batch_infer_stats = {
