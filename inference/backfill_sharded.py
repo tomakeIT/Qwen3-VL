@@ -166,7 +166,7 @@ def infer_dense_delta_predictions_images_cached(
     load_start = time.perf_counter()
     frame_caches_by_episode: Dict[int, Dict[str, Dict[int, Any]]] = {}
     jobs: List[Dict[str, Any]] = []
-    image_workers = max(1, min(int(global_build_workers), len(target_views)))
+    image_workers = max(1, int(global_build_workers))
     for episode_meta in episode_metas:
         jobs.extend(build_episode_jobs(episode_meta))
         frame_caches_by_episode[episode_meta["episode_id"]] = load_episode_image_frame_cache(

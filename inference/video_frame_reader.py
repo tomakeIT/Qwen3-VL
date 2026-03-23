@@ -65,30 +65,55 @@ def _load_frames_from_image_cache(
     return frame_cache
 
 
+def _chunk_frame_indices(
+    frame_indices: Sequence[int],
+    num_chunks: int,
+) -> List[List[int]]:
+    if len(frame_indices) == 0:
+        return [[]]
+    if num_chunks <= 1:
+        return [list(frame_indices)]
+
+    chunk_size = max(1, (len(frame_indices) + num_chunks - 1) // num_chunks)
+    return [
+        list(frame_indices[start_idx:start_idx + chunk_size])
+        for start_idx in range(0, len(frame_indices), chunk_size)
+    ]
+
+
 def load_episode_image_frame_cache(
     video_sources: Dict[str, LeRobotVideoSource],
     total_frames: int,
     image_workers: int = 1,
 ) -> Dict[str, Dict[int, Image.Image]]:
     frame_indices = list(range(total_frames))
+    image_dirs = load_episode_image_dirs(video_sources)
+    target_views = list(image_dirs.keys())
+    if len(target_views) == 0:
+        return {}
 
-    def _load_single_view(video_source: LeRobotVideoSource):
-        image_dir = video_source.image_dir
-        if not image_dir or not os.path.isdir(image_dir):
-            raise FileNotFoundError(
-                f"缺少预处理后的 images 目录: target_view={video_source.target_view}, image_dir={image_dir}"
-            )
-        return video_source.target_view, _load_frames_from_image_cache(
+    max_workers = max(1, int(image_workers))
+    chunks_per_view = max(1, (max_workers + len(target_views) - 1) // len(target_views))
+    frame_chunks = _chunk_frame_indices(frame_indices, chunks_per_view)
+
+    load_tasks = [
+        (target_view, image_dirs[target_view], frame_chunk)
+        for target_view in target_views
+        for frame_chunk in frame_chunks
+    ]
+
+    def _load_single_chunk(task):
+        target_view, image_dir, chunk_frame_indices = task
+        return target_view, _load_frames_from_image_cache(
             image_dir=image_dir,
-            frame_indices=frame_indices,
+            frame_indices=chunk_frame_indices,
         )
 
-    frame_caches: Dict[str, Dict[int, Image.Image]] = {}
-    max_workers = max(1, min(image_workers, len(video_sources)))
+    frame_caches: Dict[str, Dict[int, Image.Image]] = {target_view: {} for target_view in target_views}
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        iterator = executor.map(_load_single_view, video_sources.values())
+        iterator = executor.map(_load_single_chunk, load_tasks)
         for target_view, target_view_frames in iterator:
-            frame_caches[target_view] = target_view_frames
+            frame_caches[target_view].update(target_view_frames)
     return frame_caches
 
 
