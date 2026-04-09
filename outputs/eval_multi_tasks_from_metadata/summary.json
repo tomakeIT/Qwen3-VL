@@ -1,0 +1,22 @@
+{
+  "results": [
+    {
+      "task": "ArrangeVegetables",
+      "task_desc": "Put the vegetables on the cutting board",
+      "reference_demo": "/home/jialeng/LightwheelData/1W_Robocasa_X7s_More/ArrangeVegetables/ArrangeVegetables_1762485860604564",
+      "num_eval_demos": 10,
+      "metrics_output": "outputs/eval_multi_tasks_from_metadata/ArrangeVegetables/metrics.json",
+      "plot_output": "outputs/eval_multi_tasks_from_metadata/ArrangeVegetables/curves.png",
+      "demo_list_output": "outputs/eval_multi_tasks_from_metadata/ArrangeVegetables/demo_list.json"
+    },
+    {
+      "task": "CheesyBread",
+      "task_desc": "Put the cheese cube on the bread",
+      "reference_demo": "/home/jialeng/LightwheelData/1W_Robocasa_X7s_More/CheesyBread/CheesyBread_1761035143386392",
+      "num_eval_demos": 10,
+      "metrics_output": "outputs/eval_multi_tasks_from_metadata/CheesyBread/metrics.json",
+      "plot_output": "outputs/eval_multi_tasks_from_metadata/CheesyBread/curves.png",
+      "demo_list_output": "outputs/eval_multi_tasks_from_metadata/CheesyBread/demo_list.json"
+    }
+  ]
+}

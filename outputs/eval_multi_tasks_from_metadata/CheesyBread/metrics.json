@@ -1,0 +1,7 @@
+{
+  "pearson": 0.9850355978352295,
+  "spearman": 0.9812615657647173,
+  "norm_total_variation": 1.2547743432057872,
+  "monotonicity_rate": 0.8797882117882118,
+  "num_valid_demos": 10
+}

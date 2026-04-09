@@ -1,5 +1,4 @@
 models/
-outputs/
 qwen-vl-finetune/output
 qwen-vl-finetune/wandb
 miscs/
