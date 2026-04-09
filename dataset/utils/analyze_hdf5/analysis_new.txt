@@ -1,0 +1,820 @@
+
+============================================================
+分析HDF5文件: dataset.hdf5
+============================================================
+文件大小: 1.42 MB
+
+文件结构:
+  Group: data
+  Group: data/demo_0
+  Dataset: data/demo_0/actions
+    Shape: (1089, 12)
+    Dtype: float32
+    Size: 13,068 元素
+    内存大小: 51.05 KB
+    范围: [-1.3922, 1.9506]
+    均值: 0.2252
+    标准差: 0.6410
+  Group: data/demo_0/initial_state
+  Group: data/demo_0/initial_state/articulation
+  Group: data/demo_0/initial_state/articulation/cabinet_1_main_group_1
+  Dataset: data/demo_0/initial_state/articulation/cabinet_1_main_group_1/joint_position
+    Shape: (1, 14)
+    Dtype: float32
+    Size: 14 元素
+    内存大小: 56 B
+    范围: [0.0000, 0.0000]
+    均值: 0.0000
+    标准差: 0.0000
+  Dataset: data/demo_0/initial_state/articulation/cabinet_1_main_group_1/joint_velocity
+    Shape: (1, 14)
+    Dtype: float32
+    Size: 14 元素
+    内存大小: 56 B
+    范围: [0.0000, 0.0000]
+    均值: 0.0000
+    标准差: 0.0000
+  Dataset: data/demo_0/initial_state/articulation/cabinet_1_main_group_1/root_pose
+    Shape: (1, 7)
+    Dtype: float32
+    Size: 7 元素
+    内存大小: 28 B
+    范围: [-0.3010, 2.6585]
+    均值: 0.6582
+    标准差: 0.9775
+  Dataset: data/demo_0/initial_state/articulation/cabinet_1_main_group_1/root_velocity
+    Shape: (1, 6)
+    Dtype: float32
+    Size: 6 元素
+    内存大小: 24 B
+    范围: [0.0000, 0.0000]
+    均值: 0.0000
+    标准差: 0.0000
+  Group: data/demo_0/initial_state/articulation/robot
+  Dataset: data/demo_0/initial_state/articulation/robot/joint_position
+    Shape: (1, 16)
+    Dtype: float32
+    Size: 16 元素
+    内存大小: 64 B
+    范围: [0.0000, 0.0000]
+    均值: 0.0000
+    标准差: 0.0000
+  Dataset: data/demo_0/initial_state/articulation/robot/joint_velocity
+    Shape: (1, 16)
+    Dtype: float32
+    Size: 16 元素
+    内存大小: 64 B
+    范围: [0.0000, 0.0000]
+    均值: 0.0000
+    标准差: 0.0000
+  Dataset: data/demo_0/initial_state/articulation/robot/root_pose
+    Shape: (1, 7)
+    Dtype: float32
+    Size: 7 元素
+    内存大小: 28 B
+    范围: [-1.8400, 2.4300]
+    均值: 0.1914
+    标准差: 1.2304
+  Dataset: data/demo_0/initial_state/articulation/robot/root_velocity
+    Shape: (1, 6)
+    Dtype: float32
+    Size: 6 元素
+    内存大小: 24 B
+    范围: [0.0000, 0.0000]
+    均值: 0.0000
+    标准差: 0.0000
+  Group: data/demo_0/initial_state/articulation/storage_furniture_right_group_1
+  Dataset: data/demo_0/initial_state/articulation/storage_furniture_right_group_1/joint_position
+    Shape: (1, 3)
+    Dtype: float32
+    Size: 3 元素
+    内存大小: 12 B
+    范围: [0.0000, 0.0000]
+    均值: 0.0000
+    标准差: 0.0000
+  Dataset: data/demo_0/initial_state/articulation/storage_furniture_right_group_1/joint_velocity
+    Shape: (1, 3)
+    Dtype: float32
+    Size: 3 元素
+    内存大小: 12 B
+    范围: [0.0000, 0.0000]
+    均值: 0.0000
+    标准差: 0.0000
+  Dataset: data/demo_0/initial_state/articulation/storage_furniture_right_group_1/root_pose
+    Shape: (1, 7)
+    Dtype: float32
+    Size: 7 元素
+    内存大小: 28 B
+    范围: [-2.2364, 2.9735]
+    均值: 0.2357
+    标准差: 1.4778
+  Dataset: data/demo_0/initial_state/articulation/storage_furniture_right_group_1/root_velocity
+    Shape: (1, 6)
+    Dtype: float32
+    Size: 6 元素
+    内存大小: 24 B
+    范围: [0.0000, 0.0000]
+    均值: 0.0000
+    标准差: 0.0000
+  Group: data/demo_0/initial_state/rigid_object
+  Group: data/demo_0/initial_state/rigid_object/akita_black_bowl
+  Dataset: data/demo_0/initial_state/rigid_object/akita_black_bowl/root_pose
+    Shape: (1, 7)
+    Dtype: float32
+    Size: 7 元素
+    内存大小: 28 B
+    范围: [-2.3058, 2.3537]
+    均值: -0.0210
+    标准差: 1.3369
+  Dataset: data/demo_0/initial_state/rigid_object/akita_black_bowl/root_velocity
+    Shape: (1, 6)
+    Dtype: float32
+    Size: 6 元素
+    内存大小: 24 B
+    范围: [0.0000, 0.0000]
+    均值: 0.0000
+    标准差: 0.0000
+  Group: data/demo_0/initial_state/rigid_object/plate
+  Dataset: data/demo_0/initial_state/rigid_object/plate/root_pose
+    Shape: (1, 7)
+    Dtype: float32
+    Size: 7 元素
+    内存大小: 28 B
+    范围: [-2.0650, 2.3344]
+    均值: 0.0043
+    标准差: 1.2717
+  Dataset: data/demo_0/initial_state/rigid_object/plate/root_velocity
+    Shape: (1, 6)
+    Dtype: float32
+    Size: 6 元素
+    内存大小: 24 B
+    范围: [0.0000, 0.0000]
+    均值: 0.0000
+    标准差: 0.0000
+  Group: data/demo_0/joint_targets
+  Dataset: data/demo_0/joint_targets/joint_effort_target
+    Shape: (1089, 32)
+    Dtype: float32
+    Size: 34,848 元素
+    内存大小: 136.12 KB
+    范围: [0.0000, 0.0000]
+    均值: 0.0000
+    标准差: 0.0000
+  Dataset: data/demo_0/joint_targets/joint_pos_target
+    Shape: (1089, 32)
+    Dtype: float32
+    Size: 34,848 元素
+    内存大小: 136.12 KB
+    范围: [-1.3922, 1.9506]
+    均值: 0.0672
+    标准差: 0.4658
+  Dataset: data/demo_0/joint_targets/joint_vel_target
+    Shape: (1089, 32)
+    Dtype: float32
+    Size: 34,848 元素
+    内存大小: 136.12 KB
+    范围: [0.0000, 0.0000]
+    均值: 0.0000
+    标准差: 0.0000
+  Group: data/demo_0/obs
+  Dataset: data/demo_0/obs/actions
+    Shape: (1089, 12)
+    Dtype: float32
+    Size: 13,068 元素
+    内存大小: 51.05 KB
+    范围: [-1.3922, 1.9506]
+    均值: 0.2251
+    标准差: 0.6407
+  Dataset: data/demo_0/obs/ee_pose
+    Shape: (1089, 2, 7)
+    Dtype: float32
+    Size: 15,246 元素
+    内存大小: 59.55 KB
+    范围: [-2.1225, 2.7868]
+    均值: 0.3640
+    标准差: 1.2447
+  Dataset: data/demo_0/obs/joint_pos
+    Shape: (1089, 16)
+    Dtype: float32
+    Size: 17,424 元素
+    内存大小: 68.06 KB
+    范围: [-1.3210, 1.9132]
+    均值: 0.0651
+    标准差: 0.4564
+  Dataset: data/demo_0/obs/joint_pos_rel
+    Shape: (1089, 16)
+    Dtype: float32
+    Size: 17,424 元素
+    内存大小: 68.06 KB
+    范围: [-1.3210, 1.9132]
+    均值: 0.0651
+    标准差: 0.4564
+  Dataset: data/demo_0/obs/joint_vel
+    Shape: (1089, 16)
+    Dtype: float32
+    Size: 17,424 元素
+    内存大小: 68.06 KB
+    范围: [-3.2215, 2.7665]
+    均值: -0.0036
+    标准差: 0.2400
+  Dataset: data/demo_0/obs/joint_vel_rel
+    Shape: (1089, 16)
+    Dtype: float32
+    Size: 17,424 元素
+    内存大小: 68.06 KB
+    范围: [-3.2215, 2.7665]
+    均值: -0.0036
+    标准差: 0.2400
+  Group: data/demo_0/obs/raw_action
+  Dataset: data/demo_0/obs/raw_action/base_mode
+    Shape: (1089, 1)
+    Dtype: float32
+    Size: 1,089 元素
+    内存大小: 4.25 KB
+    范围: [1.0000, 1.0000]
+    均值: 1.0000
+    标准差: 0.0000
+  Dataset: data/demo_0/obs/raw_action/lbase
+    Shape: (1089, 2)
+    Dtype: float32
+    Size: 2,178 元素
+    内存大小: 8.51 KB
+    范围: [-0.0000, -0.0000]
+    均值: 0.0000
+    标准差: 0.0000
+  Dataset: data/demo_0/obs/raw_action/lbase_button
+    Shape: (1089, 1)
+    Dtype: float32
+    Size: 1,089 元素
+    内存大小: 4.25 KB
+    范围: [0.0000, 0.0000]
+    均值: 0.0000
+    标准差: 0.0000
+  Dataset: data/demo_0/obs/raw_action/left_arm_abs
+    Shape: (1089, 7)
+    Dtype: float32
+    Size: 7,623 元素
+    内存大小: 29.78 KB
+    范围: [-0.1952, 0.9630]
+    均值: 0.2816
+    标准差: 0.2779
+  Dataset: data/demo_0/obs/raw_action/left_arm_delta
+    Shape: (1089, 6)
+    Dtype: float32
+    Size: 6,534 元素
+    内存大小: 25.52 KB
+    范围: [-0.0922, 0.0839]
+    均值: -0.0000
+    标准差: 0.0056
+  Dataset: data/demo_0/obs/raw_action/left_gripper
+    Shape: (1089, 1)
+    Dtype: float32
+    Size: 1,089 元素
+    内存大小: 4.25 KB
+    范围: [-1.0000, 1.0000]
+    均值: -0.6255
+    标准差: 0.7784
+  Dataset: data/demo_0/obs/raw_action/lgrasp
+    Shape: (1089, 1)
+    Dtype: float32
+    Size: 1,089 元素
+    内存大小: 4.25 KB
+    范围: [-1.0000, 1.0000]
+    均值: -0.6255
+    标准差: 0.7784
+  Dataset: data/demo_0/obs/raw_action/lpose_abs
+    Shape: (1089, 4, 4)
+    Dtype: float32
+    Size: 17,424 元素
+    内存大小: 68.06 KB
+    范围: [-0.9963, 1.0000]
+    均值: 0.1629
+    标准差: 0.4790
+  Dataset: data/demo_0/obs/raw_action/lpose_delta
+    Shape: (1089, 4, 4)
+    Dtype: float32
+    Size: 17,424 元素
+    内存大小: 68.06 KB
+    范围: [-0.0917, 1.0000]
+    均值: 0.2500
+    标准差: 0.4330
+  Dataset: data/demo_0/obs/raw_action/lsqueeze
+    Shape: (1089, 1)
+    Dtype: float32
+    Size: 1,089 元素
+    内存大小: 4.25 KB
+    范围: [0.0000, 0.0000]
+    均值: 0.0000
+    标准差: 0.0000
+  Dataset: data/demo_0/obs/raw_action/rbase
+    Shape: (1089, 2)
+    Dtype: float32
+    Size: 2,178 元素
+    内存大小: 8.51 KB
+    范围: [-0.0000, -0.0000]
+    均值: 0.0000
+    标准差: 0.0000
+  Dataset: data/demo_0/obs/raw_action/rbase_button
+    Shape: (1089, 1)
+    Dtype: float32
+    Size: 1,089 元素
+    内存大小: 4.25 KB
+    范围: [0.0000, 0.0000]
+    均值: 0.0000
+    标准差: 0.0000
+  Dataset: data/demo_0/obs/raw_action/reset
+    Shape: (1089, 1)
+    Dtype: float32
+    Size: 1,089 元素
+    内存大小: 4.25 KB
+    范围: [0.0000, 0.0000]
+    均值: 0.0000
+    标准差: 0.0000
+  Dataset: data/demo_0/obs/raw_action/rgrasp
+    Shape: (1089, 1)
+    Dtype: float32
+    Size: 1,089 元素
+    内存大小: 4.25 KB
+    范围: [-1.0000, -1.0000]
+    均值: -1.0000
+    标准差: 0.0000
+  Dataset: data/demo_0/obs/raw_action/right_arm_abs
+    Shape: (1089, 7)
+    Dtype: float32
+    Size: 7,623 元素
+    内存大小: 29.78 KB
+    范围: [-0.0004, 0.7371]
+    均值: 0.2403
+    标准差: 0.3034
+  Dataset: data/demo_0/obs/raw_action/right_arm_delta
+    Shape: (1089, 6)
+    Dtype: float32
+    Size: 6,534 元素
+    内存大小: 25.52 KB
+    范围: [-0.0022, 0.0020]
+    均值: 0.0000
+    标准差: 0.0001
+  Dataset: data/demo_0/obs/raw_action/right_gripper
+    Shape: (1089, 1)
+    Dtype: float32
+    Size: 1,089 元素
+    内存大小: 4.25 KB
+    范围: [-1.0000, -1.0000]
+    均值: -1.0000
+    标准差: 0.0000
+  Dataset: data/demo_0/obs/raw_action/rpose_abs
+    Shape: (1089, 4, 4)
+    Dtype: float32
+    Size: 17,424 元素
+    内存大小: 68.06 KB
+    范围: [-0.9964, 1.0000]
+    均值: 0.1525
+    标准差: 0.4793
+  Dataset: data/demo_0/obs/raw_action/rpose_delta
+    Shape: (1089, 4, 4)
+    Dtype: float32
+    Size: 17,424 元素
+    内存大小: 68.06 KB
+    范围: [-0.0022, 1.0000]
+    均值: 0.2500
+    标准差: 0.4330
+  Dataset: data/demo_0/obs/raw_action/rsqueeze
+    Shape: (1089, 1)
+    Dtype: float32
+    Size: 1,089 元素
+    内存大小: 4.25 KB
+    范围: [0.0000, 0.0000]
+    均值: 0.0000
+    标准差: 0.0000
+  Dataset: data/demo_0/obs/raw_action/started
+    Shape: (1089, 1)
+    Dtype: float32
+    Size: 1,089 元素
+    内存大小: 4.25 KB
+    范围: [1.0000, 1.0000]
+    均值: 1.0000
+    标准差: 0.0000
+  Dataset: data/demo_0/obs/raw_action/x_button
+    Shape: (1089, 1)
+    Dtype: float32
+    Size: 1,089 元素
+    内存大小: 4.25 KB
+    范围: [0.0000, 0.0000]
+    均值: 0.0000
+    标准差: 0.0000
+  Dataset: data/demo_0/obs/raw_action/x_button_pressed
+    Shape: (1089, 1)
+    Dtype: float32
+    Size: 1,089 元素
+    内存大小: 4.25 KB
+    范围: [0.0000, 0.0000]
+    均值: 0.0000
+    标准差: 0.0000
+  Dataset: data/demo_0/obs/raw_action/y_button
+    Shape: (1089, 1)
+    Dtype: float32
+    Size: 1,089 元素
+    内存大小: 4.25 KB
+    范围: [0.0000, 0.0000]
+    均值: 0.0000
+    标准差: 0.0000
+  Dataset: data/demo_0/obs/raw_action/y_button_pressed
+    Shape: (1089, 1)
+    Dtype: float32
+    Size: 1,089 元素
+    内存大小: 4.25 KB
+    范围: [0.0000, 0.0000]
+    均值: 0.0000
+    标准差: 0.0000
+  Group: data/demo_0/obs/raw_input
+  Dataset: data/demo_0/obs/raw_input/abs_left_wrist_mat
+    Shape: (1144, 4, 4)
+    Dtype: float32
+    Size: 18,304 元素
+    内存大小: 71.50 KB
+    范围: [-0.9963, 1.0000]
+    均值: 0.1633
+    标准差: 0.4788
+  Dataset: data/demo_0/obs/raw_input/abs_right_wrist_mat
+    Shape: (1144, 4, 4)
+    Dtype: float32
+    Size: 18,304 元素
+    内存大小: 71.50 KB
+    范围: [-0.9964, 1.0000]
+    均值: 0.1525
+    标准差: 0.4793
+  Dataset: data/demo_0/obs/raw_input/head_mat
+    Shape: (1144, 4, 4)
+    Dtype: float32
+    Size: 18,304 元素
+    内存大小: 71.50 KB
+    范围: [-0.4161, 1.6185]
+    均值: 0.3315
+    标准差: 0.5445
+  Group: data/demo_0/obs/raw_input/internal_state
+  Dataset: data/demo_0/obs/raw_input/internal_state/base_mode_flag
+    Shape: (1144, 1)
+    Dtype: float32
+    Size: 1,144 元素
+    内存大小: 4.47 KB
+    范围: [1.0000, 1.0000]
+    均值: 1.0000
+    标准差: 0.0000
+  Dataset: data/demo_0/obs/raw_input/internal_state/has_keep
+    Shape: (1144, 1)
+    Dtype: float32
+    Size: 1,144 元素
+    内存大小: 4.47 KB
+    范围: [0.0000, 0.0000]
+    均值: 0.0000
+    标准差: 0.0000
+  Dataset: data/demo_0/obs/raw_input/internal_state/has_started
+    Shape: (1144, 1)
+    Dtype: float32
+    Size: 1,144 元素
+    内存大小: 4.47 KB
+    范围: [0.0000, 1.0000]
+    均值: 0.9519
+    标准差: 0.2139
+  Dataset: data/demo_0/obs/raw_input/internal_state/is_body_moving
+    Shape: (1144, 1)
+    Dtype: float32
+    Size: 1,144 元素
+    内存大小: 4.47 KB
+    范围: [0.0000, 0.0000]
+    均值: 0.0000
+    标准差: 0.0000
+  Dataset: data/demo_0/obs/raw_input/internal_state/is_body_moving_last_frame
+    Shape: (1144, 1)
+    Dtype: float32
+    Size: 1,144 元素
+    内存大小: 4.47 KB
+    范围: [1.0000, 1.0000]
+    均值: 1.0000
+    标准差: 0.0000
+  Dataset: data/demo_0/obs/raw_input/internal_state/last_checkpoint_frame_idx
+    Shape: (1144, 1)
+    Dtype: float32
+    Size: 1,144 元素
+    内存大小: 4.47 KB
+    范围: [-1.0000, -1.0000]
+    均值: -1.0000
+    标准差: 0.0000
+  Dataset: data/demo_0/obs/raw_input/internal_state/last_start_state
+    Shape: (1144, 1)
+    Dtype: float32
+    Size: 1,144 元素
+    内存大小: 4.47 KB
+    范围: [0.0000, 0.0000]
+    均值: 0.0000
+    标准差: 0.0000
+  Dataset: data/demo_0/obs/raw_input/internal_state/last_thumbstick_state
+    Shape: (1144, 1)
+    Dtype: float32
+    Size: 1,144 元素
+    内存大小: 4.47 KB
+    范围: [0.0000, 0.0000]
+    均值: 0.0000
+    标准差: 0.0000
+  Dataset: data/demo_0/obs/raw_input/internal_state/last_x_button_state
+    Shape: (1144, 1)
+    Dtype: float32
+    Size: 1,144 元素
+    内存大小: 4.47 KB
+    范围: [0.0000, 0.0000]
+    均值: 0.0000
+    标准差: 0.0000
+  Dataset: data/demo_0/obs/raw_input/internal_state/last_y_button_state
+    Shape: (1144, 1)
+    Dtype: float32
+    Size: 1,144 元素
+    内存大小: 4.47 KB
+    范围: [0.0000, 0.0000]
+    均值: 0.0000
+    标准差: 0.0000
+  Dataset: data/demo_0/obs/raw_input/internal_state/rollback_keep
+    Shape: (1144, 1)
+    Dtype: float32
+    Size: 1,144 元素
+    内存大小: 4.47 KB
+    范围: [0.0000, 0.0000]
+    均值: 0.0000
+    标准差: 0.0000
+  Dataset: data/demo_0/obs/raw_input/internal_state/started
+    Shape: (1144, 1)
+    Dtype: float32
+    Size: 1,144 元素
+    内存大小: 4.47 KB
+    范围: [0.0000, 1.0000]
+    均值: 0.9519
+    标准差: 0.2139
+  Group: data/demo_0/obs/raw_input/left_controller_state
+  Dataset: data/demo_0/obs/raw_input/left_controller_state/a_button
+    Shape: (1144, 1)
+    Dtype: float32
+    Size: 1,144 元素
+    内存大小: 4.47 KB
+    范围: [0.0000, 0.0000]
+    均值: 0.0000
+    标准差: 0.0000
+  Dataset: data/demo_0/obs/raw_input/left_controller_state/b_button
+    Shape: (1144, 1)
+    Dtype: float32
+    Size: 1,144 元素
+    内存大小: 4.47 KB
+    范围: [0.0000, 0.0000]
+    均值: 0.0000
+    标准差: 0.0000
+  Dataset: data/demo_0/obs/raw_input/left_controller_state/squeeze
+    Shape: (1144, 1)
+    Dtype: float32
+    Size: 1,144 元素
+    内存大小: 4.47 KB
+    范围: [0.0000, 0.0000]
+    均值: 0.0000
+    标准差: 0.0000
+  Dataset: data/demo_0/obs/raw_input/left_controller_state/thumbstick
+    Shape: (1144, 1)
+    Dtype: float32
+    Size: 1,144 元素
+    内存大小: 4.47 KB
+    范围: [0.0000, 0.0000]
+    均值: 0.0000
+    标准差: 0.0000
+  Dataset: data/demo_0/obs/raw_input/left_controller_state/thumbstick_x
+    Shape: (1144, 1)
+    Dtype: float32
+    Size: 1,144 元素
+    内存大小: 4.47 KB
+    范围: [-0.0000, -0.0000]
+    均值: 0.0000
+    标准差: 0.0000
+  Dataset: data/demo_0/obs/raw_input/left_controller_state/thumbstick_y
+    Shape: (1144, 1)
+    Dtype: float32
+    Size: 1,144 元素
+    内存大小: 4.47 KB
+    范围: [-0.0000, -0.0000]
+    均值: 0.0000
+    标准差: 0.0000
+  Dataset: data/demo_0/obs/raw_input/left_controller_state/trigger
+    Shape: (1144, 1)
+    Dtype: float32
+    Size: 1,144 元素
+    内存大小: 4.47 KB
+    范围: [0.0000, 1.0000]
+    均值: 0.1783
+    标准差: 0.3818
+  Dataset: data/demo_0/obs/raw_input/rel_left_wrist_mat
+    Shape: (1144, 4, 4)
+    Dtype: float32
+    Size: 18,304 元素
+    内存大小: 71.50 KB
+    范围: [-0.0917, 1.0000]
+    均值: 0.2500
+    标准差: 0.4330
+  Dataset: data/demo_0/obs/raw_input/rel_right_wrist_mat
+    Shape: (1144, 4, 4)
+    Dtype: float32
+    Size: 18,304 元素
+    内存大小: 71.50 KB
+    范围: [-0.0022, 1.0000]
+    均值: 0.2500
+    标准差: 0.4330
+  Group: data/demo_0/obs/raw_input/right_controller_state
+  Dataset: data/demo_0/obs/raw_input/right_controller_state/a_button
+    Shape: (1144, 1)
+    Dtype: float32
+    Size: 1,144 元素
+    内存大小: 4.47 KB
+    范围: [0.0000, 0.0000]
+    均值: 0.0000
+    标准差: 0.0000
+  Dataset: data/demo_0/obs/raw_input/right_controller_state/b_button
+    Shape: (1144, 1)
+    Dtype: float32
+    Size: 1,144 元素
+    内存大小: 4.47 KB
+    范围: [0.0000, 0.0000]
+    均值: 0.0000
+    标准差: 0.0000
+  Dataset: data/demo_0/obs/raw_input/right_controller_state/squeeze
+    Shape: (1144, 1)
+    Dtype: float32
+    Size: 1,144 元素
+    内存大小: 4.47 KB
+    范围: [0.0000, 0.0000]
+    均值: 0.0000
+    标准差: 0.0000
+  Dataset: data/demo_0/obs/raw_input/right_controller_state/thumbstick
+    Shape: (1144, 1)
+    Dtype: float32
+    Size: 1,144 元素
+    内存大小: 4.47 KB
+    范围: [0.0000, 0.0000]
+    均值: 0.0000
+    标准差: 0.0000
+  Dataset: data/demo_0/obs/raw_input/right_controller_state/thumbstick_x
+    Shape: (1144, 1)
+    Dtype: float32
+    Size: 1,144 元素
+    内存大小: 4.47 KB
+    范围: [-0.0000, -0.0000]
+    均值: 0.0000
+    标准差: 0.0000
+  Dataset: data/demo_0/obs/raw_input/right_controller_state/thumbstick_y
+    Shape: (1144, 1)
+    Dtype: float32
+    Size: 1,144 元素
+    内存大小: 4.47 KB
+    范围: [-0.0000, -0.0000]
+    均值: 0.0000
+    标准差: 0.0000
+  Dataset: data/demo_0/obs/raw_input/right_controller_state/trigger
+    Shape: (1144, 1)
+    Dtype: float32
+    Size: 1,144 元素
+    内存大小: 4.47 KB
+    范围: [0.0000, 0.0000]
+    均值: 0.0000
+    标准差: 0.0000
+  Group: data/demo_0/states
+  Group: data/demo_0/states/articulation
+  Group: data/demo_0/states/articulation/cabinet_1_main_group_1
+  Dataset: data/demo_0/states/articulation/cabinet_1_main_group_1/joint_position
+    Shape: (1089, 14)
+    Dtype: float32
+    Size: 15,246 元素
+    内存大小: 59.55 KB
+    范围: [0.0000, 0.0000]
+    均值: 0.0000
+    标准差: 0.0000
+  Dataset: data/demo_0/states/articulation/cabinet_1_main_group_1/joint_velocity
+    Shape: (1089, 14)
+    Dtype: float32
+    Size: 15,246 元素
+    内存大小: 59.55 KB
+    范围: [-0.0000, 0.0000]
+    均值: -0.0000
+    标准差: 0.0000
+  Dataset: data/demo_0/states/articulation/cabinet_1_main_group_1/root_pose
+    Shape: (1089, 7)
+    Dtype: float32
+    Size: 7,623 元素
+    内存大小: 29.78 KB
+    范围: [-0.3010, 2.6585]
+    均值: 0.6582
+    标准差: 0.9775
+  Dataset: data/demo_0/states/articulation/cabinet_1_main_group_1/root_velocity
+    Shape: (1089, 6)
+    Dtype: float32
+    Size: 6,534 元素
+    内存大小: 25.52 KB
+    范围: [0.0000, 0.0000]
+    均值: 0.0000
+    标准差: 0.0000
+  Group: data/demo_0/states/articulation/robot
+  Dataset: data/demo_0/states/articulation/robot/joint_position
+    Shape: (1089, 16)
+    Dtype: float32
+    Size: 17,424 元素
+    内存大小: 68.06 KB
+    范围: [-1.3210, 1.9132]
+    均值: 0.0651
+    标准差: 0.4566
+  Dataset: data/demo_0/states/articulation/robot/joint_velocity
+    Shape: (1089, 16)
+    Dtype: float32
+    Size: 17,424 元素
+    内存大小: 68.06 KB
+    范围: [-3.2215, 2.7665]
+    均值: -0.0036
+    标准差: 0.2400
+  Dataset: data/demo_0/states/articulation/robot/root_pose
+    Shape: (1089, 7)
+    Dtype: float32
+    Size: 7,623 元素
+    内存大小: 29.78 KB
+    范围: [-1.8400, 2.4300]
+    均值: 0.1914
+    标准差: 1.2304
+  Dataset: data/demo_0/states/articulation/robot/root_velocity
+    Shape: (1089, 6)
+    Dtype: float32
+    Size: 6,534 元素
+    内存大小: 25.52 KB
+    范围: [0.0000, 0.0000]
+    均值: 0.0000
+    标准差: 0.0000
+  Group: data/demo_0/states/articulation/storage_furniture_right_group_1
+  Dataset: data/demo_0/states/articulation/storage_furniture_right_group_1/joint_position
+    Shape: (1089, 3)
+    Dtype: float32
+    Size: 3,267 元素
+    内存大小: 12.76 KB
+    范围: [0.0000, 0.2296]
+    均值: 0.0284
+    标准差: 0.0615
+  Dataset: data/demo_0/states/articulation/storage_furniture_right_group_1/joint_velocity
+    Shape: (1089, 3)
+    Dtype: float32
+    Size: 3,267 元素
+    内存大小: 12.76 KB
+    范围: [-0.1182, 0.1641]
+    均值: 0.0036
+    标准差: 0.0151
+  Dataset: data/demo_0/states/articulation/storage_furniture_right_group_1/root_pose
+    Shape: (1089, 7)
+    Dtype: float32
+    Size: 7,623 元素
+    内存大小: 29.78 KB
+    范围: [-2.2364, 2.9735]
+    均值: 0.2357
+    标准差: 1.4778
+  Dataset: data/demo_0/states/articulation/storage_furniture_right_group_1/root_velocity
+    Shape: (1089, 6)
+    Dtype: float32
+    Size: 6,534 元素
+    内存大小: 25.52 KB
+    范围: [0.0000, 0.0000]
+    均值: 0.0000
+    标准差: 0.0000
+  Group: data/demo_0/states/rigid_object
+  Group: data/demo_0/states/rigid_object/akita_black_bowl
+  Dataset: data/demo_0/states/rigid_object/akita_black_bowl/root_pose
+    Shape: (1089, 7)
+    Dtype: float32
+    Size: 7,623 元素
+    内存大小: 29.78 KB
+    范围: [-2.3058, 2.3537]
+    均值: -0.0236
+    标准差: 1.3353
+  Dataset: data/demo_0/states/rigid_object/akita_black_bowl/root_velocity
+    Shape: (1089, 6)
+    Dtype: float32
+    Size: 6,534 元素
+    内存大小: 25.52 KB
+    范围: [-0.3924, 0.0093]
+    均值: -0.0001
+    标准差: 0.0054
+  Group: data/demo_0/states/rigid_object/plate
+  Dataset: data/demo_0/states/rigid_object/plate/root_pose
+    Shape: (1089, 7)
+    Dtype: float32
+    Size: 7,623 元素
+    内存大小: 29.78 KB
+    范围: [-2.0650, 2.3344]
+    均值: 0.0017
+    标准差: 1.2700
+  Dataset: data/demo_0/states/rigid_object/plate/root_velocity
+    Shape: (1089, 6)
+    Dtype: float32
+    Size: 6,534 元素
+    内存大小: 25.52 KB
+    范围: [-0.3924, 0.0011]
+    均值: -0.0001
+    标准差: 0.0054
+
+详细数据内容:
+
+顶层数据集:

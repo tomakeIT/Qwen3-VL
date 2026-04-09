@@ -30,10 +30,8 @@ def parse_args() -> argparse.Namespace:
         description="将 LeRobot videos/ 并行预处理为 images/ 镜像目录。"
     )
     parser.add_argument("--dataset-root", required=True, help="LeRobot 数据集根目录")
-    parser.add_argument("--workers", type=int, default=8, help="并行 ffmpeg worker 数")
-    parser.add_argument("--start-episode", type=int, default=0, help="起始 episode_index")
-    parser.add_argument("--limit-episodes", type=int, default=None, help="最多处理多少个 episode")
-    parser.add_argument("--ffmpeg-bin", default="ffmpeg", help="ffmpeg 可执行文件路径")
+    parser.add_argument("--workers", type=int, default=16, help="并行 ffmpeg worker 数")
+    parser.add_argument("--output-dir", default=None, help="输出目录，默认使用 dataset_root 下的 images/")
     parser.add_argument("--overwrite", action="store_true", help="覆盖已存在的 images 目录")
     return parser.parse_args()
 
@@ -46,24 +44,24 @@ def discover_video_keys(info_features: Dict[str, Dict[str, object]]) -> List[str
 
 def iter_video_jobs(
     dataset_root: str,
-    start_episode: int,
-    limit_episodes: Optional[int],
+    output_dir: Optional[str],
 ) -> Iterable[VideoExtractJob]:
     info = load_lerobot_info(dataset_root)
     episode_rows = load_lerobot_episode_rows(dataset_root)
     video_keys = discover_video_keys(info["features"])
 
-    selected_rows = [
-        row for row in episode_rows if int(row["episode_index"]) >= int(start_episode)
-    ]
-    if limit_episodes is not None:
-        selected_rows = selected_rows[: max(0, int(limit_episodes))]
-
-    for row in selected_rows:
+    for row in episode_rows:
         episode_index = int(row["episode_index"])
         for video_key in video_keys:
             video_path = resolve_episode_video_path(dataset_root, info, episode_index, video_key)
-            image_dir = resolve_episode_image_dir(dataset_root, video_path)
+            if output_dir is not None:
+                # 使用自定义输出目录，保持与原始相同的相对结构
+                rel_path = os.path.relpath(video_path, dataset_root)
+                rel_dir = os.path.dirname(rel_path)
+                video_name = os.path.splitext(os.path.basename(video_path))[0]
+                image_dir = os.path.join(output_dir, rel_dir, video_name)
+            else:
+                image_dir = resolve_episode_image_dir(dataset_root, video_path)
             yield VideoExtractJob(
                 episode_index=episode_index,
                 video_key=video_key,
@@ -78,7 +76,6 @@ def image_dir_ready(image_dir: str) -> bool:
 
 def extract_video_to_images(
     job: VideoExtractJob,
-    ffmpeg_bin: str,
     overwrite: bool,
 ) -> str:
     if image_dir_ready(job.image_dir) and not overwrite:
@@ -98,7 +95,7 @@ def extract_video_to_images(
     try:
         output_pattern = os.path.join(temp_dir, "frame_%06d.png")
         command = [
-            ffmpeg_bin,
+            "ffmpeg",
             "-v",
             "error",
             "-i",
@@ -135,8 +132,7 @@ def main() -> None:
     jobs = list(
         iter_video_jobs(
             dataset_root=args.dataset_root,
-            start_episode=args.start_episode,
-            limit_episodes=args.limit_episodes,
+            output_dir=args.output_dir,
         )
     )
     if not jobs:
@@ -144,9 +140,11 @@ def main() -> None:
         return
 
     total_episodes = len({job.episode_index for job in jobs})
+    output_info = args.output_dir if args.output_dir else "dataset_root/images"
     print(
         "[precompute_images] "
         f"dataset_root={args.dataset_root} "
+        f"output_dir={output_info} "
         f"episodes={total_episodes} "
         f"videos={len(jobs)} "
         f"workers={args.workers} "
@@ -161,7 +159,6 @@ def main() -> None:
             executor.submit(
                 extract_video_to_images,
                 job=job,
-                ffmpeg_bin=args.ffmpeg_bin,
                 overwrite=args.overwrite,
             ): job
             for job in jobs
